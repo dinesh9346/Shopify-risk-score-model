@@ -44,3 +44,26 @@ model RiskScore {
   reasons     String   @default("")
   createdAt   DateTime @default(now())
 }
+
+model StoreOrder {
+  id                  String    @id @default(cuid())
+  shop                String    // Isolates data so Store A never sees Store B's data
+  shopifyOrderId      String    @unique 
+  
+  customerId          String?   // Nullable, because guest checkouts don't have an ID
+  customerEmail       String?   // CRUCIAL: Lets you track fraudsters using guest checkouts!
+  
+  //  The Scoring Factors
+  orderValue          Float
+  financialStatus     String?   // e.g., "PAID", "PENDING", "REFUNDED"
+  fulfillmentStatus   String?   // e.g., "FULFILLED", "UNFULFILLED"
+  cancelledAt         DateTime? // If this has a date, it means they cancelled it
+  hasDispute          Boolean   @default(false) // Flips to true if a chargeback happens
+  
+  //  Timestamps
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([shop, customerId]) 
+  @@index([shop, customerEmail]) 
+}
