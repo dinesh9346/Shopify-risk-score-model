@@ -6,7 +6,7 @@ export const action = async ({ request }) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
 
   if (topic === "ORDERS_UPDATED") {
-    console.log(`📦 Order Updated webhook received for order: ${payload.id}`);
+    console.log(` Order Updated webhook received for order: ${payload.id}`);
 
     try {
       // 2. Update the specific order in your local database
@@ -21,9 +21,9 @@ export const action = async ({ request }) => {
           cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
         },
       });
-      console.log(`✅ Local Data Warehouse updated for order ${payload.id}`);
+      console.log(` Local Data Warehouse updated for order ${payload.id}`);
     } catch (error) {
-      console.error("❌ Error updating local DB (Order might not exist yet):", error.message);
+      console.error(" Error updating local DB (Order might not exist yet):", error.message);
     }
   }
 

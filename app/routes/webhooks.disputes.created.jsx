@@ -24,9 +24,9 @@ export const action = async ({ request }) => {
         },
       });
       
-      console.log(`✅ Order ${payload.order_id} marked as Disputed in local Data Warehouse.`);
+      console.log(` Order ${payload.order_id} marked as Disputed in local Data Warehouse.`);
     } catch (error) {
-      console.error("❌ Error updating dispute status in local DB:", error.message);
+      console.error(" Error updating dispute status in local DB:", error.message);
     }
   }
 
