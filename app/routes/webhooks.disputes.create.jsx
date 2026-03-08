@@ -14,7 +14,7 @@ export const action = async ({ request }) => {
       const orderGid = `gid://shopify/Order/${payload.order_id}`;
 
       // 2. Find the order and flip the "hasDispute" switch to true
-      await prisma.storeOrder.updateMany({
+      await prisma.shopify_store_order.updateMany({
         where: { 
           shopifyOrderId: orderGid,
           shop: shop

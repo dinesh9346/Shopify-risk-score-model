@@ -10,7 +10,7 @@ export const action = async ({ request }) => {
 
     try {
       // 2. Update the specific order in your local database
-      await prisma.storeOrder.updateMany({
+      await prisma.shopify_store_order.updateMany({
         where: { 
           shopifyOrderId: payload.admin_graphql_api_id,
           shop: shop
@@ -30,3 +30,5 @@ export const action = async ({ request }) => {
   // Always return a 200 response so Shopify knows you received it
   return new Response();
 };
+
+

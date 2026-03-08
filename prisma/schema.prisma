@@ -1,18 +1,12 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["risk_score_model"]
 }
-
 model Session {
   id            String    @id
   shop          String
@@ -31,39 +25,177 @@ model Session {
   emailVerified Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+  @@schema("risk_score_model")
 }
-model RiskScore {
-  id          Int      @id @default(autoincrement())
+model shopify_store_order {
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyOrderId    String
+
+  customerId        String?
+  customerEmail     String?
+  customerPhone     String?
+
+  orderValue        Decimal  @db.Decimal(10,2)
+
+  paymentGateway    String?
+  financialStatus   String?
+  fulfillmentStatus String?
+
+  ipAddress         String?
+  shippingCountry   String?
+  billingCountry    String?
+
+  hasDispute        Boolean  @default(false)
+  isRTO             Boolean  @default(false)
+
+  cancelledAt       DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  riskScore         zippyy_risk_score?
+
+  @@unique([shop, shopifyOrderId])
+  @@index([shop, customerEmail])
+  @@index([shop, customerId])
+  @@index([shop, createdAt])
+
+  @@schema("risk_score_model")
+}
+model buyer_profile {
+  id            String   @id @default(cuid())
+  shop          String
+
+  customerId    String?
+  email         String?
+  phone         String?
+
+  totalOrders   Int      @default(0)
+  totalSpent    Decimal  @db.Decimal(12,2) @default(0)
+
+  totalRTO      Int      @default(0)
+  totalDisputes Int      @default(0)
+
+  riskLevel     String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([shop, email])
+  @@index([shop, customerId])
+
+  @@schema("risk_score_model")
+}
+model zippyy_risk_score {
+  id          String   @id @default(cuid())
   shop        String
+
   orderId     String   @unique
-  customerId  String?
-  orderValue  Float
-  paymentType String
+  order       shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
   score       Int
-  riskLevel   String
-  reasons     String   @default("")
+  riskLevel   RiskLevel
+  reasons     String
+
   createdAt   DateTime @default(now())
+
+  @@index([shop, orderId])
+
+  @@schema("risk_score_model")
+}
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  @@schema("risk_score_model")
+}
+// --------------------------------------------------
+// 4. WEBHOOK IDEMPOTENCY
+// --------------------------------------------------
+model store_completed_order {
+  id          String   @id @default(cuid()) // Updated to cuid()
+  shop        String
+  orderId     String
+  customerId  String?  // Made nullable to match StoreOrder guest checkouts
+  orderValue  Float
+  
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, orderId], name: "shop_orderId")
+  @@schema("risk_score_model")
 }
 
-model StoreOrder {
-  id                  String    @id @default(cuid())
-  shop                String    // Isolates data so Store A never sees Store B's data
-  shopifyOrderId      String    @unique 
+// // --------------------------------------------------
+// // 2. STORE ORDER (The New Source of Truth)
+// // --------------------------------------------------
+// model shopify_store_order{
+//   id                String     @id @default(cuid())
+//   shop              String
+//   shopifyOrderId    String     @unique 
   
-  customerId          String?   // Nullable, because guest checkouts don't have an ID
-  customerEmail       String?   // CRUCIAL: Lets you track fraudsters using guest checkouts!
+//   // Customer Snapshot (Replaces the need for a BuyerProfile table)
+//   customerId        String? 
+//   customerEmail     String? 
+//   customerPhone     String?
+//   customerFirstName String?
+//   customerLastName  String?
   
-  //  The Scoring Factors
-  orderValue          Float
-  financialStatus     String?   // e.g., "PAID", "PENDING", "REFUNDED"
-  fulfillmentStatus   String?   // e.g., "FULFILLED", "UNFULFILLED"
-  cancelledAt         DateTime? // If this has a date, it means they cancelled it
-  hasDispute          Boolean   @default(false) // Flips to true if a chargeback happens
+//   // Financial & Logistics Factors
+//   orderValue        Float
+//   paymentGateway    String?    // e.g., "Cash on Delivery (COD)", "Stripe"
+//   financialStatus   String?    // e.g., "PAID", "PENDING", "REFUNDED"
+//   fulfillmentStatus String?    // e.g., "FULFILLED", "UNFULFILLED"
+//   cancelledAt       DateTime?  // Presence of date means cancelled
+//   hasDispute        Boolean    @default(false)
+//   isRTO             Boolean    @default(false) // Tracks Return to Origin
   
-  //  Timestamps
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+//   // Timestamps
+//   createdAt         DateTime   @default(now())
+//   updatedAt         DateTime   @updatedAt
 
-  @@index([shop, customerId]) 
-  @@index([shop, customerEmail]) 
-}
+//   // Relation: An order can have one RiskScore associated with it
+//   riskScore         zippyy_risk_score?
+
+//   // Crucial indexes for lightning-fast dynamic profile aggregation
+//   @@index([shop, customerId]) 
+//   @@index([shop, customerEmail]) 
+//   @@schema("risk_score_model")
+// }
+
+// // --------------------------------------------------
+// // 3. RISK SCORE 
+// model zippyy_risk_score {
+//   id          String     @id @default(cuid()) // Updated to cuid() for consistency
+//   shop        String
+  
+//   // Explicit Relation to StoreOrder
+//   orderId     String     @unique
+//   order       shopify_store_order @relation(fields: [orderId], references: [shopifyOrderId], onDelete: Cascade)
+  
+//   customerId  String?
+//   orderValue  Float
+//   paymentType String
+//   score       Int
+//   riskLevel   String     // e.g., "LOW", "MEDIUM", "HIGH", "SEVERE"
+//   reasons     String     @default("")
+  
+//   createdAt   DateTime   @default(now())
+
+//   @@index([shop, customerId])
+//   @@schema("risk_score_model")
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
