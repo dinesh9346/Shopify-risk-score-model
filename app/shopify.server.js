@@ -9,7 +9,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { triggerBulkOrderSync } from "./models/Sync.server";
-
+import { startQueueListener } from "./models/queue.server.js";
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
@@ -74,6 +74,14 @@ webhooks: {
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
+if (process.env.NODE_ENV === "production") {
+  startQueueListener().catch(console.error);
+} else {
+  if (!global.__queueListenerStarted) {
+    global.__queueListenerStarted = true;
+    startQueueListener().catch(console.error);
+  }
+}
 
 export default shopify;
 export const apiVersion = ApiVersion.October25;
