@@ -87,6 +87,37 @@ enum RiskLevel {
   HIGH
   @@schema("risk_score_model")
 }
+model zippyy_buyer_profile {
+  id                    String   @id @default(uuid())
+  shop                  String
+  buyerIdentifier       String   // The Fallback ID (Phone > Email > CustID > OrderID)
+  customerEmail         String? 
+  customerId            String?  
+  customerPhone         String?
+
+  // Aggregate Stats
+  totalCheckoutAttempts Int      @default(0)
+  validOrderCount       Int      @default(0)
+  totalSpend            Float    @default(0)
+  fulfilledCount        Int      @default(0)
+  cancelledCount        Int      @default(0)
+  rtoCount              Int      @default(0)
+  codCount              Int      @default(0)
+  unpaidCount           Int      @default(0)
+  disputeCount          Int      @default(0)
+  refundCount           Int      @default(0)
+
+  // Computed Risk Data
+  buyerSegment          String   @default("New") // VIP, Repeat Buyer, New, High Risk
+  riskReasons           String?  
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // This ensures we only ever have ONE profile per email, per shop
+  @@unique([shop, buyerIdentifier])
+  @@schema("risk_score_model")
+}
 // --------------------------------------------------
 // 4. WEBHOOK IDEMPOTENCY
 // --------------------------------------------------
@@ -102,77 +133,4 @@ model store_completed_order {
   @@unique([shop, orderId], name: "shop_orderId")
   @@schema("risk_score_model")
 }
-
-// // --------------------------------------------------
-// // 2. STORE ORDER (The New Source of Truth)
-// // --------------------------------------------------
-// model shopify_store_order{
-//   id                String     @id @default(cuid())
-//   shop              String
-//   shopifyOrderId    String     @unique 
-  
-//   // Customer Snapshot (Replaces the need for a BuyerProfile table)
-//   customerId        String? 
-//   customerEmail     String? 
-//   customerPhone     String?
-//   customerFirstName String?
-//   customerLastName  String?
-  
-//   // Financial & Logistics Factors
-//   orderValue        Float
-//   paymentGateway    String?    // e.g., "Cash on Delivery (COD)", "Stripe"
-//   financialStatus   String?    // e.g., "PAID", "PENDING", "REFUNDED"
-//   fulfillmentStatus String?    // e.g., "FULFILLED", "UNFULFILLED"
-//   cancelledAt       DateTime?  // Presence of date means cancelled
-//   hasDispute        Boolean    @default(false)
-//   isRTO             Boolean    @default(false) // Tracks Return to Origin
-  
-//   // Timestamps
-//   createdAt         DateTime   @default(now())
-//   updatedAt         DateTime   @updatedAt
-
-//   // Relation: An order can have one RiskScore associated with it
-//   riskScore         zippyy_risk_score?
-
-//   // Crucial indexes for lightning-fast dynamic profile aggregation
-//   @@index([shop, customerId]) 
-//   @@index([shop, customerEmail]) 
-//   @@schema("risk_score_model")
-// }
-
-// // --------------------------------------------------
-// // 3. RISK SCORE 
-// model zippyy_risk_score {
-//   id          String     @id @default(cuid()) // Updated to cuid() for consistency
-//   shop        String
-  
-//   // Explicit Relation to StoreOrder
-//   orderId     String     @unique
-//   order       shopify_store_order @relation(fields: [orderId], references: [shopifyOrderId], onDelete: Cascade)
-  
-//   customerId  String?
-//   orderValue  Float
-//   paymentType String
-//   score       Int
-//   riskLevel   String     // e.g., "LOW", "MEDIUM", "HIGH", "SEVERE"
-//   reasons     String     @default("")
-  
-//   createdAt   DateTime   @default(now())
-
-//   @@index([shop, customerId])
-//   @@schema("risk_score_model")
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
 

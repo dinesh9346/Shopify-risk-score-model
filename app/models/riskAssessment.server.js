@@ -275,7 +275,60 @@ export async function calculateAndApplyRiskScore(shop, payload) {
   console.log(`Risk Level: ${riskLevel} (Score: ${score})`);
   console.log(`Reasons:`, reasons);
   console.log(`==============================\n`);
+ // --- BUILD THE UNIVERSAL IDENTIFIER ---
+  const safeEmail = customerEmail?.trim() || null;
+  const safePhone = customerPhone?.trim() || null;
+  const safeCustId = customerId?.trim() || null;
+  
+  // The Fallback Chain
+  const buyerIdentifier = safePhone || safeEmail || safeCustId || `guest-${orderGid}`;
 
+  // --- UPSERT THE BUYER PROFILE FOR THE DASHBOARD ---
+  try {
+    let segment = "New";
+    if (reasons.length > 0) segment = "High Risk";
+    else if (validOrderCount >= 3) segment = "VIP";
+    else if (validOrderCount >= 1) segment = "Repeat Buyer";
+
+    await prisma.zippyy_buyer_profile.upsert({
+      where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
+      update: {
+        customerEmail: safeEmail,
+        customerPhone: safePhone,
+        customerId: safeCustId,
+        totalCheckoutAttempts: totalOrders, 
+        validOrderCount,
+        totalSpend,
+        cancelledCount,
+        disputeCount,
+        rtoCount,
+        refundCount,
+        codCount,
+        buyerSegment: segment,
+        riskReasons: reasons.map(r => r.description).join(", ")
+      },
+      create: {
+        shop,
+        buyerIdentifier,
+        customerEmail: safeEmail,
+        customerPhone: safePhone,
+        customerId: safeCustId,
+        totalCheckoutAttempts: totalOrders,
+        validOrderCount,
+        totalSpend,
+        cancelledCount,
+        disputeCount,
+        rtoCount,
+        refundCount,
+        codCount,
+        buyerSegment: segment,
+        riskReasons: reasons.map(r => r.description).join(", ")
+      }
+    });
+    console.log(`✓ Updated Buyer Profile for ${buyerIdentifier}`);
+  } catch (profileError) {
+    console.error("Error saving Buyer Profile:", profileError);
+  }
   // Save Score (UPSERT)
   try {
     await prisma.zippyy_risk_score.upsert({
