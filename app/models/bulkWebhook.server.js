@@ -3,19 +3,20 @@ import shopify from "../shopify.server.js";
 import readline from "readline";
 import { Readable } from "stream";
 
-// Notice we removed 'admin' from the parameters here
+// 1. FIXED SIGNATURE: Match the queue router (shop, payload)
 export async function handleBulkFinishWebhook(shop, payload) {
+
   if (!payload || !payload.admin_graphql_api_id) {
     console.log("No bulk operation ID found in payload");
     return;
   }
 
-  // IDEMPOTENCY CHECK: Prevent reprocessing the same bulk operation
+  // IDEMPOTENCY CHECK
   const operationId = payload.admin_graphql_api_id;
   const cacheKey = `bulk_${shop}_${operationId}`;
-  
+
   if (!global.processedBulkOps) global.processedBulkOps = {};
-  
+
   if (global.processedBulkOps[cacheKey]) {
     const timeSinceLastProcess = Date.now() - global.processedBulkOps[cacheKey];
     if (timeSinceLastProcess < 30000) {
@@ -27,7 +28,7 @@ export async function handleBulkFinishWebhook(shop, payload) {
   global.processedBulkOps[cacheKey] = Date.now();
   console.log("[BULK] Checking bulk operation status");
 
-  // Generate the background admin client
+  // 2. GENERATE OFFLINE ADMIN: Build the GraphQL client for background tasks
   const { admin } = await shopify.unauthenticated.admin(shop);
 
   const response = await admin.graphql(`
@@ -60,6 +61,7 @@ export async function handleBulkFinishWebhook(shop, payload) {
   }
 
   console.log("[BULK] Downloading JSONL file");
+
   await processBulkOrders(operation.url, shop);
 }
 
@@ -68,10 +70,14 @@ async function processBulkOrders(fileUrl, shop) {
   if (!response.body) throw new Error("Bulk file empty");
 
   const stream = Readable.fromWeb(response.body);
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const rl = readline.createInterface({
+    input: stream,
+    crlfDelay: Infinity
+  });
 
   let batch = [];
   let total = 0;
+  let firstRecordLogged = false;
 
   for await (const line of rl) {
     let record;
@@ -83,15 +89,26 @@ async function processBulkOrders(fileUrl, shop) {
 
     if (!record.id) continue;
 
+    if (!firstRecordLogged) {
+      console.log("[BULK SAMPLE RECORD]", JSON.stringify(record, null, 2));
+      firstRecordLogged = true;
+    }
+
     const primaryGateway = record.paymentGatewayNames?.[0] || null;
     const isReturned = record.displayFulfillmentStatus === "RETURNED";
 
     const orderData = {
-      shop,
+      shop: shop, // Hard-mapped to ensure Prisma never receives undefined
       shopifyOrderId: record.id,
       customerId: record.customer?.id || null,
       customerEmail: record.email || null,
-      customerPhone: record.customer?.phone || null,
+      customerPhone: record.shippingAddress?.phone || record.customer?.phone || null,
+      ipAddress: record.clientIp || null,
+      
+      // Removed 'shippingAddress1' because it is not in your schema.prisma
+      
+      shippingCountry: record.shippingAddress?.countryCode || null,
+      billingCountry: record.billingAddress?.countryCode || null,
       orderValue: parseFloat(record.totalPriceSet?.shopMoney?.amount || "0"),
       financialStatus: record.displayFinancialStatus,
       fulfillmentStatus: record.displayFulfillmentStatus,
@@ -115,7 +132,7 @@ async function processBulkOrders(fileUrl, shop) {
     total += batch.length;
   }
 
-  console.log(`[BULK COMPLETE] Total Orders Synced: ${total}`);
+  console.log(`✅ [BULK COMPLETE] Total Orders Synced: ${total}`);
 }
 
 async function saveBatch(batch) {
@@ -123,7 +140,10 @@ async function saveBatch(batch) {
     batch.map(order =>
       prisma.shopify_store_order.upsert({
         where: {
-          shop_shopifyOrderId: { shop: order.shop, shopifyOrderId: order.shopifyOrderId }
+          shop_shopifyOrderId: {
+            shop: order.shop,
+            shopifyOrderId: order.shopifyOrderId
+          }
         },
         update: order,
         create: order
@@ -133,21 +153,13 @@ async function saveBatch(batch) {
 }
 
 
-
-
-
-
-
-
-
-
-
-// import prisma from "../db.server";
+// import prisma from "../db.server.js";
+// import shopify from "../shopify.server.js";
 // import readline from "readline";
 // import { Readable } from "stream";
 
-// export async function handleBulkFinishWebhook(admin, payload, shop) {
-
+// // Notice we removed 'admin' from the parameters here
+// export async function handleBulkFinishWebhook(shop, payload) {
 //   if (!payload || !payload.admin_graphql_api_id) {
 //     console.log("No bulk operation ID found in payload");
 //     return;
@@ -157,10 +169,7 @@ async function saveBatch(batch) {
 //   const operationId = payload.admin_graphql_api_id;
 //   const cacheKey = `bulk_${shop}_${operationId}`;
   
-//   // Simple in-memory cache to prevent duplicate processing within 30 seconds
-//   if (!global.processedBulkOps) {
-//     global.processedBulkOps = {};
-//   }
+//   if (!global.processedBulkOps) global.processedBulkOps = {};
   
 //   if (global.processedBulkOps[cacheKey]) {
 //     const timeSinceLastProcess = Date.now() - global.processedBulkOps[cacheKey];
@@ -170,10 +179,11 @@ async function saveBatch(batch) {
 //     }
 //   }
 
-//   // Mark as processing NOW to catch concurrent requests
 //   global.processedBulkOps[cacheKey] = Date.now();
-
 //   console.log("[BULK] Checking bulk operation status");
+
+//   // Generate the background admin client
+//   const { admin } = await shopify.unauthenticated.admin(shop);
 
 //   const response = await admin.graphql(`
 //     query {
@@ -187,7 +197,6 @@ async function saveBatch(batch) {
 //   `);
 
 //   const result = await response.json();
-
 //   const operation = result?.data?.node;
 
 //   if (!operation) {
@@ -206,34 +215,21 @@ async function saveBatch(batch) {
 //   }
 
 //   console.log("[BULK] Downloading JSONL file");
-
 //   await processBulkOrders(operation.url, shop);
 // }
 
-
-
 // async function processBulkOrders(fileUrl, shop) {
-
 //   const response = await fetch(fileUrl);
-
-//   if (!response.body) {
-//     throw new Error("Bulk file empty");
-//   }
+//   if (!response.body) throw new Error("Bulk file empty");
 
 //   const stream = Readable.fromWeb(response.body);
-
-//   const rl = readline.createInterface({
-//     input: stream,
-//     crlfDelay: Infinity
-//   });
+//   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
 //   let batch = [];
 //   let total = 0;
 
 //   for await (const line of rl) {
-
 //     let record;
-
 //     try {
 //       record = JSON.parse(line);
 //     } catch {
@@ -243,9 +239,7 @@ async function saveBatch(batch) {
 //     if (!record.id) continue;
 
 //     const primaryGateway = record.paymentGatewayNames?.[0] || null;
-
-//     const isReturned =
-//       record.displayFulfillmentStatus === "RETURNED";
+//     const isReturned = record.displayFulfillmentStatus === "RETURNED";
 
 //     const orderData = {
 //       shop,
@@ -253,14 +247,10 @@ async function saveBatch(batch) {
 //       customerId: record.customer?.id || null,
 //       customerEmail: record.email || null,
 //       customerPhone: record.customer?.phone || null,
-//       orderValue: parseFloat(
-//         record.totalPriceSet?.shopMoney?.amount || "0"
-//       ),
+//       orderValue: parseFloat(record.totalPriceSet?.shopMoney?.amount || "0"),
 //       financialStatus: record.displayFinancialStatus,
 //       fulfillmentStatus: record.displayFulfillmentStatus,
-//       cancelledAt: record.cancelledAt
-//         ? new Date(record.cancelledAt)
-//         : null,
+//       cancelledAt: record.cancelledAt ? new Date(record.cancelledAt) : null,
 //       paymentGateway: primaryGateway,
 //       isRTO: isReturned
 //     };
@@ -268,49 +258,39 @@ async function saveBatch(batch) {
 //     batch.push(orderData);
 
 //     if (batch.length >= 500) {
-
 //       await saveBatch(batch);
-
 //       total += batch.length;
-
 //       console.log(`[BULK] Synced ${total} orders`);
-
 //       batch = [];
 //     }
 //   }
 
 //   if (batch.length > 0) {
-
 //     await saveBatch(batch);
-
 //     total += batch.length;
 //   }
 
 //   console.log(`[BULK COMPLETE] Total Orders Synced: ${total}`);
 // }
 
-
-
 // async function saveBatch(batch) {
-
 //   await prisma.$transaction(
-
 //     batch.map(order =>
 //       prisma.shopify_store_order.upsert({
-
 //         where: {
-//           shop_shopifyOrderId: {
-//             shop: order.shop,
-//             shopifyOrderId: order.shopifyOrderId
-//           }
+//           shop_shopifyOrderId: { shop: order.shop, shopifyOrderId: order.shopifyOrderId }
 //         },
-
 //         update: order,
-
 //         create: order
-
 //       })
 //     )
-
 //   );
 // }
+
+
+
+
+
+
+
+

@@ -43,6 +43,7 @@ model shopify_store_order {
   fulfillmentStatus String?
 
   ipAddress         String?
+  shippingAddress1  String?
   shippingCountry   String?
   billingCountry    String?
 
@@ -60,30 +61,6 @@ model shopify_store_order {
   @@index([shop, customerEmail])
   @@index([shop, customerId])
   @@index([shop, createdAt])
-
-  @@schema("risk_score_model")
-}
-model buyer_profile {
-  id            String   @id @default(cuid())
-  shop          String
-
-  customerId    String?
-  email         String?
-  phone         String?
-
-  totalOrders   Int      @default(0)
-  totalSpent    Decimal  @db.Decimal(12,2) @default(0)
-
-  totalRTO      Int      @default(0)
-  totalDisputes Int      @default(0)
-
-  riskLevel     String?
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([shop, email])
-  @@index([shop, customerId])
 
   @@schema("risk_score_model")
 }

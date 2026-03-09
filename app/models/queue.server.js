@@ -4,6 +4,7 @@ import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageComm
 import { handleBulkFinishWebhook } from "./bulkWebhook.server.js";
 import { calculateAndApplyRiskScore } from "./riskAssessment.server.js";
 import { processOrderUpdate } from "./orderUpdate.server.js";
+import { pushRiskToShopify } from "./pushRiskScore.server.js";
 
 const QUEUE_URL = process.env.SQS_QUEUE_URL || "https://sqs.us-west-1.amazonaws.com/571109166839/apac-shopify-data-collection-queue-dev";
 
@@ -106,5 +107,81 @@ async function processDatabaseLogic(topic, shop, payload) {
 
     default:
       console.log(` [SQS ROUTER WARNING] No routing defined for topic: ${topic}`);
+  }
+}
+
+// Grab the new URL from your environment variables
+const OUTBOUND_QUEUE_URL = process.env.OUTBOUND_SQS_QUEUE_URL;
+
+export async function enqueueOutboundRisk(shop, orderId, riskScore, riskLevel, riskFacts) { 
+  // Fallback just in case shop is empty
+  const safeShop = shop || "unknown-shop"; 
+  const safeOrderId = orderId ? orderId.replace(/[^0-9]/g, '') : "unknown-id";
+
+  const params = {
+    QueueUrl: OUTBOUND_QUEUE_URL,
+    MessageBody: JSON.stringify({ 
+      shop, 
+      orderId, 
+      riskScore, 
+      riskLevel,
+      riskFacts, 
+      timestamp: new Date().toISOString() 
+    }),
+    MessageGroupId: safeShop, 
+    MessageDeduplicationId: `${safeOrderId}-${Date.now()}` 
+  };
+ 
+  // 🔍 THE DEBUG LOGGER: Let's see what is actually going to AWS
+  console.log("🔍 [DEBUG] Sending to AWS:", {
+    url: params.QueueUrl,
+    groupId: params.MessageGroupId,
+    dedupId: params.MessageDeduplicationId
+  });
+
+  try {
+    await sqsClient.send(new SendMessageCommand(params));
+    console.log(`✅ [OUTBOUND PRODUCER] Queued Risk Push for ${orderId}`);
+  } catch (error) {
+    console.error(`❌ [OUTBOUND PRODUCER ERROR] Failed to queue risk push:`, error);
+    throw error; 
+  }
+}
+// 4. THE OUTBOUND CONSUMER: Listens to the outbound queue and pushes risk scores to Shopify in the background
+export async function startOutboundQueueListener() {
+  console.log("🚀 [OUTBOUND CONSUMER] Postman is awake and checking AWS...");
+
+  while (true) {
+    try {
+      const receiveParams = {
+        QueueUrl: OUTBOUND_QUEUE_URL,
+        MaxNumberOfMessages: 10,
+        WaitTimeSeconds: 20,
+      };
+
+      const { Messages } = await sqsClient.send(new ReceiveMessageCommand(receiveParams));
+
+      if (!Messages || Messages.length === 0) continue;
+
+      for (const message of Messages) {
+        const payload = JSON.parse(message.Body);
+        console.log(`📦 [OUTBOUND CONSUMER] Found message for order ${payload.orderId}. Pushing to Shopify...`);
+        
+        try {
+          await pushRiskToShopify(payload.shop, payload.orderId, payload.riskLevel, payload.riskFacts);
+
+          await sqsClient.send(new DeleteMessageCommand({
+            QueueUrl: OUTBOUND_QUEUE_URL,
+            ReceiptHandle: message.ReceiptHandle,
+          }));
+          console.log(`🗑️ [OUTBOUND CONSUMER] Success! Deleted from AWS.`);
+        } catch (apiError) {
+          console.error(`⚠️ [OUTBOUND API ERROR] Shopify rejected it:`, apiError.message);
+        }
+      }
+    } catch (error) {
+      console.error("❌ [OUTBOUND NETWORK ERROR]", error.message);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
 }
