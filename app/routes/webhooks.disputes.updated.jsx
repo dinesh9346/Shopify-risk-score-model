@@ -4,7 +4,7 @@ import { enqueueWebhook } from "../models/queue.server";
 export const action = async ({ request }) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
 
-  if (topic === "DISPUTES_CREATE") {
+  if (topic === "DISPUTES_UPDATE") {
     console.log(`[WEBHOOK ROUTE] Received ${topic} from Shopify for ${shop}`);
     
     // Immediately push to SQS and free up the connection

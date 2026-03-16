@@ -39,9 +39,9 @@ export async function pushRiskToShopify(shop, orderId, riskLevel, riskFacts) {
     const assessmentData = await assessmentResponse.json();
     
     if (assessmentData.data?.orderRiskAssessmentCreate?.userErrors?.length > 0) {
-      console.error("❌ [SHOPIFY API] Native Risk Error:", assessmentData.data.orderRiskAssessmentCreate.userErrors);
+      console.error(" [SHOPIFY API] Native Risk Error:", assessmentData.data.orderRiskAssessmentCreate.userErrors);
     } else {
-      console.log(`✅ [SHOPIFY API] Native Risk Block created for ${orderId}`);
+      console.log(` [SHOPIFY API] Native Risk Block created for ${orderId}`);
     }
 
     // --- STEP B: ADD ORDER TAG ---
@@ -55,13 +55,13 @@ export async function pushRiskToShopify(shop, orderId, riskLevel, riskFacts) {
 
     const tagData = await tagResponse.json();
     if (tagData.data?.tagsAdd?.userErrors?.length > 0) {
-      console.error("⚠️ [SHOPIFY API] Tagging Error:", tagData.data.tagsAdd.userErrors);
+      console.error(" [SHOPIFY API] Tagging Error:", tagData.data.tagsAdd.userErrors);
     } else {
-      console.log(`✅ [SHOPIFY API] Tag added: ${riskTag}`);
+      console.log(` [SHOPIFY API] Tag added: ${riskTag}`);
     }
 
   } catch (error) {
-    console.error(`❌ [SHOPIFY API ERROR] Background push failed:`, error);
+    console.error(` [SHOPIFY API ERROR] Background push failed:`, error);
     // Throwing ensures the SQS message stays in the queue for a retry if the API was down
     throw error; 
   }

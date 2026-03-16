@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import { enqueueWebhook } from "../models/queue.server"; 
-
+console.log(" [WEBHOOK ROUTE] Webhook route loaded and ready to receive messages.");
 export const action = async ({ request }) => {
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);

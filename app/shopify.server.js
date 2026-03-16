@@ -4,12 +4,14 @@ import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
-  DeliveryMethod, // 🔹 Added this for webhook registration
+  DeliveryMethod,
+  BillingInterval,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { triggerBulkOrderSync } from "./models/Sync.server";
 import { startQueueListener, startOutboundQueueListener } from "./models/queue.server.js";
+export const MONTHLY_PLAN = 'Zippyy Pro Monthly';
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
@@ -19,6 +21,20 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+
+// BILLING: Simple monthly subscription for your app
+  billing: {
+    [MONTHLY_PLAN]: {
+      lineItems: [
+        {
+          amount: 29.99,
+          currencyCode: 'USD',
+          interval: BillingInterval.Every30Days,
+        }
+      ]
+    },
+  },
+
 
 hooks: {
   afterAuth: async ({ admin, session }) => {
@@ -31,8 +47,7 @@ hooks: {
       // Register webhooks
       const result = await shopify.registerWebhooks({ session });
       console.log("Webhook registration result:", result);
-      // console.log("Triggering bulk sync manually...");
-      // await triggerBulkOrderSync(admin, shop);
+
     } catch (error) {
       console.error(`[AUTH] Error during afterAuth for ${shop}:`, error);
       // Don't throw - let auth complete even if webhooks/sync fail
@@ -43,10 +58,10 @@ hooks: {
     });
 
     if (orderCount === 0) {
-      console.log(`🚀 First install detected for ${shop}. Starting bulk sync...`);
+      console.log(` First install detected for ${shop}. Starting bulk sync...`);
       await triggerBulkOrderSync(admin, shop);
     } else {
-      console.log(`✅ Orders already synced for ${shop}. Skipping bulk sync.`);
+      console.log(` Orders already synced for ${shop}. Skipping bulk sync.`);
     }
   },
 },
@@ -66,6 +81,22 @@ webhooks: {
     deliveryMethod: DeliveryMethod.Http,
     callbackUrl: "/webhooks/bulk/finish",
   },
+  DISPUTES_CREATE: { 
+      deliveryMethod: DeliveryMethod.Http,
+      callbackUrl: "/webhooks/disputes/create" 
+    },
+    DISPUTES_UPDATE: { 
+      deliveryMethod: DeliveryMethod.Http, 
+      callbackUrl: "/webhooks/disputes/updated" 
+    },
+    FULFILLMENTS_CREATE: {
+      deliveryMethod: DeliveryMethod.Http,
+      callbackUrl: "/webhooks/fulfillments/create",
+    },
+    FULFILLMENTS_UPDATE: {
+      deliveryMethod: DeliveryMethod.Http,
+      callbackUrl: "/webhooks/fulfillments/updated",
+    },
 },
   future: {
     expiringOfflineAccessTokens: true,

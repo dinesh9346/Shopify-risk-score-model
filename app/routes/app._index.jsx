@@ -1,315 +1,624 @@
-
-import { useLoaderData } from "react-router";
-import { boundary } from "@shopify/shopify-app-react-router/server";
-import { useState, useCallback } from "react";
-
-import "@shopify/polaris/build/esm/styles.css";
-import enTranslations from "@shopify/polaris/locales/en.json";
-
 import {
-  AppProvider,
   Page,
   Layout,
-  Card,
-  BlockStack,
   Text,
-  Badge,
-  IndexTable,
-  useIndexResourceState,
-  Grid,
-  Banner,
+  Card,
+  Button,
+  BlockStack,
+  InlineGrid,
   Box,
-  Popover,
-  Button
+  CalloutCard,
+  Badge,
+  List,
+  TextField,
+  FormLayout,
+  Banner,
+  EmptyState,
 } from "@shopify/polaris";
-
+import { useState, useEffect } from "react";
+import { useLoaderData, useSubmit, useActionData, useNavigation, useNavigate } from "react-router"; 
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-// import { syncHistoricalOrders } from "../models/Sync.server"; 
-// ^ Uncomment syncHistoricalOrders if you are using it
 
-/* ================= BACKEND LOADER ================= */
+// 1. SERVER-SIDE LOADER: Fetches data when the page loads
 export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  try {
-    const orderCount = await prisma.shopify_store_order.count({
-      where: { shop }
-    });
+  const totalOrders = await prisma.shopify_store_order.count({ where: { shop } });
+  const highRiskCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "High Risk" } });
+  const vipCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "VIP" } });
+  const repeatCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "Repeat Buyer" } });
+  const newCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "New" } });
+  
+  // Add this calculation right above your return statement
+  const riskRate = totalOrders > 0 
+  ? ((highRiskCount / totalOrders) * 100).toFixed(1) 
+  : 0;
+  const riskRateTone = riskRate > 10 ? "critical" : "subdued";
 
-    // 🚨 Uncomment this block if you want auto-syncing
-    // if (orderCount === 0) {
-    //   console.log(`⚠️ No orders found. Running historical sync for ${shop}`);
-    //   syncHistoricalOrders(admin, shop).catch(console.error);
-    // }
+  const recentUpdates = await prisma.zippyy_buyer_profile.findMany({
+    where: { shop },
+    orderBy: { updatedAt: "desc" },
+    take: 5
+  });
 
-    // Fetch scores AND include the associated order details
-    const recentScores = await prisma.zippyy_risk_score.findMany({
-      where: { shop },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        order: true // 🔥 Joins the shopify_store_order table
-      }
-    });
+  const liveActivity = recentUpdates.map(profile => {
+    const rawId = profile.customerEmail || profile.customerPhone || "Guest Buyer";
+    const maskedId = rawId.includes("@") 
+      ? rawId.replace(/(.{1})(.*)(?=@)/, "$1***") 
+      : rawId.substring(0, 3) + "***";
 
-    // Flatten and serialize the data so React Router doesn't crash on Dates/Decimals
-    const safeScores = recentScores.map((score) => ({
-      id: score.id,
-      // Extract the Shopify Order ID from the joined table
-      orderId: score.order?.shopifyOrderId || score.orderId, 
-      // Convert Prisma Decimal to standard Number safely
-      orderValue: Number(score.order?.orderValue ?? 0),
-      
-      // 🔥 THE FIX: Map financialStatus to paymentType so it actually shows the data
-      paymentType: score.order?.financialStatus || "UNKNOWN",
-      
-      riskLevel: score.riskLevel,
-      score: score.score,
-      reasons: score.reasons,
-      createdAt: score.createdAt ? score.createdAt.toISOString() : null,
-    }));
+    let actionData = {};
 
-    const highRiskCount = safeScores.filter((o) => o.riskLevel === "HIGH").length;
-    const mediumRiskCount = safeScores.filter((o) => o.riskLevel === "MEDIUM").length;
+    if (profile.buyerSegment === "High Risk") {
+      actionData = { action: "Flagged", tone: "critical", text: `High risk signals detected for ${maskedId}. Reason: ${profile.riskReasons || "Multiple factors"}.` };
+    } else if (profile.buyerSegment === "VIP") {
+      actionData = { action: "Upgraded", tone: "success", text: `${maskedId} reached VIP status.` };
+    } else if (profile.buyerSegment === "Repeat Buyer") {
+      actionData = { action: "Recognized", tone: "success", text: `Trusted repeat buyer ${maskedId} identified.` };
+    } else {
+      actionData = { action: "Analyzed", tone: "info", text: `New buyer profile generated for ${maskedId}.` };
+    }
+    return actionData;
+  });
 
-    return Response.json({
-      error: null,
-      orderCount,
-      recentScores: safeScores,
-      kpis: {
-        totalAnalyzed: safeScores.length,
-        highRiskCount,
-        mediumRiskCount
-      }
-    });
+  return Response.json({ 
+    totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
+  });
+};
 
-  } catch (error) {
-    console.error("Loader error:", error);
-    // 🔥 If it crashes, it safely sends the error message instead of blanking out
-    return Response.json({
-      error: error.message,
-      orderCount: 0,
-      recentScores: [],
-      kpis: { totalAnalyzed: 0, highRiskCount: 0, mediumRiskCount: 0 }
-    });
+// 2. SERVER-SIDE ACTION: Handles form submissions safely and saves to DB
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const feedbackText = formData.get("feedback");
+
+  if (feedbackText && feedbackText.trim() !== "") {
+    console.log(`[FEEDBACK RECEIVED] Attempting to save: ${feedbackText}`);
+    
+    try {
+      // Save the feedback to the PostgreSQL database
+      await prisma.merchant_feedback.create({
+        data: { 
+          shop: session.shop, 
+          message: feedbackText 
+        }
+      });
+
+      console.log(`[FEEDBACK SAVED] Successfully written to database.`);
+      return Response.json({ success: true });
+    } catch (error) {
+      console.error("[DATABASE ERROR] Failed to save feedback:", error);
+      // Return the exact error message so we can see it in the UI
+      return Response.json({ success: false, error: error.message }, { status: 500 });
+    }
   }
-};
-/* ================= COMPONENTS ================= */
 
-const RiskBadge = ({ level, score }) => {
-  let tone = "success";
-  if (level === "HIGH") tone = "critical";
-  if (level === "MEDIUM") tone = "warning";
-
-  return (
-    <Badge tone={tone}>
-      {level} ({score} pts)
-    </Badge>
-  );
+  return Response.json({ success: false, error: "The server received an empty message." }, { status: 400 });
 };
 
-const ReasonsPopover = ({ reasons }) => {
-  const [active, setActive] = useState(false);
-  const toggleActive = useCallback(() => setActive((active) => !active), []);
+// 3. CLIENT-SIDE UI COMPONENT
+export default function Dashboard() {
+  const { 
+    totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
+  } = useLoaderData();
+  
+  const actionData = useActionData();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  
+  const [feedback, setFeedback] = useState("");
+  const isSubmitting = navigation.state === "submitting";
+  const isRefreshing = navigation.state === "loading";
 
-  const reasonsList = reasons
-    ? reasons.split(/[|,\n]/).map((r) => r.trim()).filter(Boolean)
-    : [];
+  // Calculate actual profiles generated
+  const activeProfilesCount = highRiskCount + vipCount + repeatCount + newCount;
 
-  return (
-    <Popover
-      active={active}
-      activator={
-        <Button onClick={toggleActive} plain monochrome removeUnderline>
-          <Text variant="bodyMd" tone="subdued" decoration="underline">
-            {reasonsList.length > 0 ? "View Reasons" : "No reasons"}
-          </Text>
-        </Button>
-      }
-      onClose={toggleActive}
-      sectioned={false}
-    >
-      <Box padding="400" width="350px">
-        <BlockStack gap="300">
-          <Text variant="headingSm" as="h3">Assessment Reasons</Text>
-          <BlockStack gap="200">
-            {reasonsList.length > 0 ? (
-              reasonsList.map((reason, index) => (
-                <Box 
-                  key={index} 
-                  padding="200" 
-                  background="bg-surface-secondary" 
-                  borderRadius="100"
-                  borderWidth="100"
-                  borderColor="border-subdued"
-                >
-                  <Text variant="bodySm" as="p">
-                    • {reason}
-                  </Text>
-                </Box>
-              ))
-            ) : (
-              <Text tone="subdued">No detailed reasons provided.</Text>
-            )}
-          </BlockStack>
-        </BlockStack>
-      </Box>
-    </Popover>
-  );
-};
+  // Clear the text box only if the submission was actually successful
+  useEffect(() => {
+    if (actionData?.success) {
+      setFeedback("");
+    }
+  }, [actionData]);
 
-/* ================= DASHBOARD UI ================= */
+  // Forcefully push the React state to the backend
+  const handleFeedbackSubmit = () => {
+    const formData = new FormData();
+    formData.append("feedback", feedback);
+    
+    // Using index routing explicitly
+    submit(formData, { method: "post", action: "?index" });
+  };
 
-function DashboardUI() {
-  // 1. SAFETY NET: Default to an empty object if loader is undefined
-  const data = useLoaderData() || {};
+  // 🔥 NEW: Refresh handler for the Empty State button
+  const handleRefresh = () => {
+    submit(null, { method: "get" });
+  };
 
-  // 2. ERROR HANDLING: Show error banner if loader caught an error
-  if (!data || data.error) {
+  // 🔥 NEW: Intercept the render if the Bulk Sync hasn't built profiles yet
+  if (activeProfilesCount === 0) {
     return (
-      <Page title="System Error">
-        <Banner tone="critical" title="Data Load Error">
-          <p>{data?.error || "Could not retrieve dashboard data. Please check your database connection."}</p>
-        </Banner>
+      <Page title="Zippyy Risk Intelligence">
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <EmptyState
+                heading="Analyzing your customer history..."
+                action={{
+                  content: "Refresh Dashboard",
+                  onAction: handleRefresh,
+                  loading: isRefreshing
+                }}
+                image="https://cdn.shopify.com/s/assets/admin/checkout/settings-customizecart-705f57c725ac05be5a34ec20c05b94298cb8afd10bf56bd4e9a7e6141e7eb0de.svg"
+              >
+                <p>
+                  Zippyy is currently scanning your historical order data to build buyer profiles, identify VIPs, and flag serial abandoners. 
+                  <br /><br />
+                  This process runs in the background and may take a few minutes depending on your store's order volume. Check back shortly!
+                </p>
+              </EmptyState>
+            </Card>
+          </Layout.Section>
+        </Layout>
       </Page>
     );
   }
 
-  // 3. MORE SAFETY NETS: Default fallback arrays
-  const recentScores = data.recentScores || [];
-  const kpis = data.kpis || { totalAnalyzed: 0, highRiskCount: 0, mediumRiskCount: 0 };
-  const orderCount = data.orderCount || 0;
-
-  const { selectedResources, allResourcesSelected, handleSelectionChange } =
-    useIndexResourceState(recentScores);
-
-  const rows = recentScores.map(
-    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons }, index) => {
-      // Clean up the shopify order ID for display (e.g., removing gid://)
-      const cleanId = orderId ? orderId.replace("gid://shopify/Order/", "") : "N/A";
-
-      return (
-        <IndexTable.Row
-          id={id}
-          key={id}
-          position={index}
-          selected={selectedResources.includes(id)}
-        >
-          <IndexTable.Cell>
-            <Text fontWeight="bold" as="span">#{cleanId}</Text>
-          </IndexTable.Cell>
-
-          <IndexTable.Cell>
-            <Text as="span" numeric>₹{Number(orderValue || 0).toFixed(2)}</Text>
-          </IndexTable.Cell>
-
-          <IndexTable.Cell>
-            <Badge tone="info">{paymentType || "UNKNOWN"}</Badge>
-          </IndexTable.Cell>
-
-          <IndexTable.Cell>
-            <RiskBadge level={riskLevel} score={score} />
-          </IndexTable.Cell>
-
-          <IndexTable.Cell>
-            <ReasonsPopover reasons={reasons} />
-          </IndexTable.Cell>
-        </IndexTable.Row>
-      );
-    }
-  );
+  // Safe fallback to prevent division by zero for the UI charts
+  const totalProfiles = activeProfilesCount || 1; 
+  const riskRate = totalOrders > 0 ? ((highRiskCount / totalOrders) * 100).toFixed(1) : 0;
+  const riskRateTone = riskRate > 10 ? "critical" : "subdued";
+  const riskPct = (highRiskCount / totalProfiles) * 100;
+  const vipPct = ((vipCount + repeatCount) / totalProfiles) * 100;
+  const newPct = (newCount / totalProfiles) * 100;
 
   return (
-    <Page title="Zippyy Risk Engine" subtitle="Real-time fraud analysis and prevention">
-      <Layout>
-        {/* Top Sync Status */}
-        <Layout.Section>
-          <Banner tone="info">
-            <p>
-              Your Data Warehouse is synced and actively monitoring <strong>{orderCount}</strong> historical orders.
-            </p>
-          </Banner>
-        </Layout.Section>
+    <Page title="Zippyy Risk Intelligence" subtitle="Real-time fraud and RTO prevention">
+      <BlockStack gap="500">
+        
+        <CalloutCard
+          title="Your store is heavily guarded."
+          illustration="https://cdn.shopify.com/s/assets/admin/checkout/settings-customizecart-705f57c725ac05be5a34ec20c05b94298cb8afd10bf56bd4e9a7e6141e7eb0de.svg"
+          primaryAction={{
+            content: "Review High-Risk Orders",
+            url: "/app/risk-engine?tab=high-risk", 
+          }}
+        >
+          <Text as="p">
+            Zippyy is actively scanning every incoming Shopify order against our logistics network. 
+            We are identifying VIPs to reward and blocking serial abandoners to protect your bottom line.
+          </Text>
+        </CalloutCard>
 
-        {/* KPI Scoreboard */}
-        <Layout.Section>
-          <Grid>
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
+        <Layout>
+          <Layout.Section>
+            <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
               <Card background="bg-surface-secondary">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="subdued">Recent Orders Assessed</Text>
-                  <Text variant="headingXl" as="p">{kpis.totalAnalyzed}</Text>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">Analyzed Orders</Text>
+                  <Text as="p" variant="headingXl">{totalOrders.toLocaleString()}</Text>
                 </BlockStack>
               </Card>
-            </Grid.Cell>
-
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
-              <Card background="bg-surface-critical-subdued">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="critical">High Risk Intercepted</Text>
-                  <Text variant="headingXl" as="p" tone="critical">{kpis.highRiskCount}</Text>
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">VIP & Repeat</Text>
+                  <Text as="p" variant="headingXl" tone="success">{(vipCount + repeatCount).toLocaleString()}</Text>
                 </BlockStack>
               </Card>
-            </Grid.Cell>
-
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
-              <Card background="bg-surface-warning-subdued">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="caution">Medium Risk Flagged</Text>
-                  <Text variant="headingXl" as="p">{kpis.mediumRiskCount}</Text>
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">High Risk</Text>
+                  <Text as="p" variant="headingXl" tone="critical">{highRiskCount.toLocaleString()}</Text>
                 </BlockStack>
               </Card>
-            </Grid.Cell>
-          </Grid>
-        </Layout.Section>
+              <Card background="bg-surface-magic">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">Store Risk Rate</Text>
+                  <Text as="p" variant="headingXl" tone={riskRateTone}>{riskRate}%</Text>
+               </BlockStack>
+              </Card>
+            </InlineGrid>
+          </Layout.Section>
+        </Layout>
 
-        {/* Data Log */}
-        <Layout.Section>
-          <Card padding="0">
-            <Box padding="400">
-              <Text variant="headingMd" as="h2">Actionable Intelligence Log</Text>
-            </Box>
-            <IndexTable
-              resourceName={{ singular: "order", plural: "orders" }}
-              itemCount={recentScores.length}
-              selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
-              onSelectionChange={handleSelectionChange}
-              headings={[
-                { title: "Order ID" },
-                { title: "Value" },
-                { title: "Payment Method" },
-                { title: "Risk Score" },
-                { title: "Reasons" },
-              ]}
-              emptyState={
-                <Box padding="400">
-                  <Text alignment="center" tone="subdued">
-                    No risk scores generated yet.
-                  </Text>
+        <Layout>
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Your Buyer DNA</Text>
+                <Text as="p" tone="subdued">A real-time breakdown of your customer base segmentation.</Text>
+                
+                <div style={{ display: 'flex', height: '42px', borderRadius: '4px', overflow: 'hidden', width: '100%' }}>
+                  <div style={{ width: `${vipPct}%`, backgroundColor: 'var(--p-color-bg-surface-success-strong)', transition: 'width 0.5s' }} title="VIP & Repeat" />
+                  <div style={{ width: `${newPct}%`, backgroundColor: 'var(--p-color-bg-surface-info-strong)', transition: 'width 0.5s' }} title="New Buyers" />
+                  <div style={{ width: `${riskPct}%`, backgroundColor: 'var(--p-color-bg-surface-critical-strong)', transition: 'width 0.5s' }} title="High Risk" />
+                </div>
+                
+                <InlineGrid columns={3} gap="200">
+                  <BlockStack>
+                    <Badge tone="success">Trusted ({Math.round(vipPct)}%)</Badge>
+                  </BlockStack>
+                  <BlockStack>
+                    <Badge tone="info">New ({Math.round(newPct)}%)</Badge>
+                  </BlockStack>
+                  <BlockStack>
+                    <Badge tone="critical">Risk ({Math.round(riskPct)}%)</Badge>
+                  </BlockStack>
+                </InlineGrid>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Live Intelligence Log</Text>
+                <Box paddingBlockEnd="200">
+                  {liveActivity.length > 0 ? (
+                    <List type="bullet">
+                      {liveActivity.map((log, index) => (
+                        <List.Item key={index}>
+                          <Text as="span" tone={log.tone}>{log.action}: </Text>
+                          {log.text}
+                        </List.Item>
+                      ))}
+                    </List>
+                  ) : (
+                    <Text as="p" tone="subdued">Waiting for incoming order data...</Text>
+                  )}
                 </Box>
-              }
-            >
-              {rows}
-            </IndexTable>
-          </Card>
-        </Layout.Section>
-      </Layout>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+        <Layout>
+          <Layout.Section>
+            <Card background="bg-surface-secondary">
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Shape the Future of Zippyy</Text>
+                <Text as="p">
+                  Our algorithm adapts to your needs. Notice a fraud trend we missed? Speak directly to our engineering team.
+                </Text>
+                
+                {/* Dynamically show errors if the action fails */}
+                {actionData?.error && (
+                  <Banner tone="critical" title="Submission Failed">
+                    {actionData.error}
+                  </Banner>
+                )}
+
+                {actionData?.success ? (
+                  <Banner tone="success" title="Feedback received">
+                    Thank you. Our engineering team has received your message.
+                  </Banner>
+                ) : (
+                  <FormLayout>
+                    <TextField
+                      label="Feedback"
+                      labelHidden
+                      value={feedback}
+                      onChange={setFeedback}
+                      multiline={2}
+                      autoComplete="off"
+                      placeholder="Example: I need a rule that flags all prepaid orders over 10,000 INR..."
+                    />
+                    <InlineGrid columns={{ xs: 1, sm: "auto auto" }} gap="200" alignItems="center">
+                      <Button 
+                        variant="primary" 
+                        onClick={handleFeedbackSubmit} 
+                        loading={isSubmitting}
+                        disabled={!feedback}
+                      >
+                        Submit Directly to Engineers
+                      </Button>
+                    </InlineGrid>
+                  </FormLayout>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+      </BlockStack>
     </Page>
   );
 }
 
-/* ================= APP WRAPPER ================= */
 
-export default function Index() {
-  return (
-    <AppProvider i18n={enTranslations}>
-      <DashboardUI />
-    </AppProvider>
-  );
-}
 
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+
+
+
+
+
+
+
+// import {
+//   Page,
+//   Layout,
+//   Text,
+//   Card,
+//   Button,
+//   BlockStack,
+//   InlineGrid,
+//   Box,
+//   CalloutCard,
+//   Badge,
+//   List,
+//   TextField,
+//   FormLayout,
+//   Banner,
+// } from "@shopify/polaris";
+// import { useState, useEffect } from "react";
+// import { useLoaderData, useSubmit, useActionData, useNavigation, useNavigate } from "react-router"; 
+// import { authenticate } from "../shopify.server";
+// import prisma from "../db.server";
+
+// // 1. SERVER-SIDE LOADER: Fetches data when the page loads
+// export const loader = async ({ request }) => {
+//   const { session } = await authenticate.admin(request);
+//   const shop = session.shop;
+
+//   const totalOrders = await prisma.shopify_store_order.count({ where: { shop } });
+//   const highRiskCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "High Risk" } });
+//   const vipCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "VIP" } });
+//   const repeatCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "Repeat Buyer" } });
+//   const newCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "New" } });
+  
+//   // Add this calculation right above your return statement
+//   const riskRate = totalOrders > 0 
+//   ? ((highRiskCount / totalOrders) * 100).toFixed(1) 
+//   : 0;
+//   const riskRateTone = riskRate > 10 ? "critical" : "subdued";
+
+//   const recentUpdates = await prisma.zippyy_buyer_profile.findMany({
+//     where: { shop },
+//     orderBy: { updatedAt: "desc" },
+//     take: 5
+//   });
+
+//   const liveActivity = recentUpdates.map(profile => {
+//     const rawId = profile.customerEmail || profile.customerPhone || "Guest Buyer";
+//     const maskedId = rawId.includes("@") 
+//       ? rawId.replace(/(.{1})(.*)(?=@)/, "$1***") 
+//       : rawId.substring(0, 3) + "***";
+
+//     let actionData = {};
+
+//     if (profile.buyerSegment === "High Risk") {
+//       actionData = { action: "Flagged", tone: "critical", text: `High risk signals detected for ${maskedId}. Reason: ${profile.riskReasons || "Multiple factors"}.` };
+//     } else if (profile.buyerSegment === "VIP") {
+//       actionData = { action: "Upgraded", tone: "success", text: `${maskedId} reached VIP status.` };
+//     } else if (profile.buyerSegment === "Repeat Buyer") {
+//       actionData = { action: "Recognized", tone: "success", text: `Trusted repeat buyer ${maskedId} identified.` };
+//     } else {
+//       actionData = { action: "Analyzed", tone: "info", text: `New buyer profile generated for ${maskedId}.` };
+//     }
+//     return actionData;
+//   });
+
+//   return Response.json({ 
+//     totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
+//   });
+// };
+
+// // 2. SERVER-SIDE ACTION: Handles form submissions safely and saves to DB
+// export const action = async ({ request }) => {
+//   const { session } = await authenticate.admin(request);
+//   const formData = await request.formData();
+//   const feedbackText = formData.get("feedback");
+
+//   if (feedbackText && feedbackText.trim() !== "") {
+//     console.log(`[FEEDBACK RECEIVED] Attempting to save: ${feedbackText}`);
+    
+//     try {
+//       // Save the feedback to the PostgreSQL database
+//       await prisma.merchant_feedback.create({
+//         data: { 
+//           shop: session.shop, 
+//           message: feedbackText 
+//         }
+//       });
+
+//       console.log(`[FEEDBACK SAVED] Successfully written to database.`);
+//       return Response.json({ success: true });
+//     } catch (error) {
+//       console.error("[DATABASE ERROR] Failed to save feedback:", error);
+//       // Return the exact error message so we can see it in the UI
+//       return Response.json({ success: false, error: error.message }, { status: 500 });
+//     }
+//   }
+
+//   return Response.json({ success: false, error: "The server received an empty message." }, { status: 400 });
+// };
+
+// // 3. CLIENT-SIDE UI COMPONENT
+// export default function Dashboard() {
+//   const { 
+//     totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
+//   } = useLoaderData();
+  
+//   const actionData = useActionData();
+//   const submit = useSubmit();
+//   const navigation = useNavigation();
+  
+//   const [feedback, setFeedback] = useState("");
+//   const isSubmitting = navigation.state === "submitting";
+
+//   const riskRate = totalOrders > 0 ? ((highRiskCount / totalOrders) * 100).toFixed(1) : 0;
+//   const riskRateTone = riskRate > 10 ? "critical" : "subdued";
+//   const totalProfiles = highRiskCount + vipCount + repeatCount + newCount || 1; 
+//   const riskPct = (highRiskCount / totalProfiles) * 100;
+//   const vipPct = ((vipCount + repeatCount) / totalProfiles) * 100;
+//   const newPct = (newCount / totalProfiles) * 100;
+
+//   // Clear the text box only if the submission was actually successful
+//   useEffect(() => {
+//     if (actionData?.success) {
+//       setFeedback("");
+//     }
+//   }, [actionData]);
+
+//   // Forcefully push the React state to the backend
+//   const handleFeedbackSubmit = () => {
+//     const formData = new FormData();
+//     formData.append("feedback", feedback);
+    
+//     // Using index routing explicitly
+//     submit(formData, { method: "post", action: "?index" });
+//   };
+
+//   return (
+//     <Page title="Zippyy Risk Intelligence" subtitle="Real-time fraud and RTO prevention">
+//       <BlockStack gap="500">
+        
+//         <CalloutCard
+//           title="Your store is heavily guarded."
+//           illustration="https://cdn.shopify.com/s/assets/admin/checkout/settings-customizecart-705f57c725ac05be5a34ec20c05b94298cb8afd10bf56bd4e9a7e6141e7eb0de.svg"
+//           primaryAction={{
+//             content: "Review High-Risk Orders",
+//             url: "/app/risk-engine?tab=high-risk", 
+//           }}
+//         >
+//           <Text as="p">
+//             Zippyy is actively scanning every incoming Shopify order against our logistics network. 
+//             We are identifying VIPs to reward and blocking serial abandoners to protect your bottom line.
+//           </Text>
+//         </CalloutCard>
+
+//         <Layout>
+//           <Layout.Section>
+//             <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
+//               <Card background="bg-surface-secondary">
+//                 <BlockStack gap="200">
+//                   <Text as="h3" variant="headingSm" tone="subdued">Analyzed Orders</Text>
+//                   <Text as="p" variant="headingXl">{totalOrders.toLocaleString()}</Text>
+//                 </BlockStack>
+//               </Card>
+//               <Card>
+//                 <BlockStack gap="200">
+//                   <Text as="h3" variant="headingSm" tone="subdued">VIP & Repeat</Text>
+//                   <Text as="p" variant="headingXl" tone="success">{(vipCount + repeatCount).toLocaleString()}</Text>
+//                 </BlockStack>
+//               </Card>
+//               <Card>
+//                 <BlockStack gap="200">
+//                   <Text as="h3" variant="headingSm" tone="subdued">High Risk</Text>
+//                   <Text as="p" variant="headingXl" tone="critical">{highRiskCount.toLocaleString()}</Text>
+//                 </BlockStack>
+//               </Card>
+//               <Card background="bg-surface-magic">
+//                 <BlockStack gap="200">
+//                   <Text as="h3" variant="headingSm" tone="subdued">Store Risk Rate</Text>
+//                   <Text as="p" variant="headingXl" tone={riskRateTone}>{riskRate}%</Text>
+//                </BlockStack>
+//               </Card>
+//             </InlineGrid>
+//           </Layout.Section>
+//         </Layout>
+
+//         <Layout>
+//           <Layout.Section variant="oneHalf">
+//             <Card>
+//               <BlockStack gap="400">
+//                 <Text as="h2" variant="headingMd">Your Buyer DNA</Text>
+//                 <Text as="p" tone="subdued">A real-time breakdown of your customer base segmentation.</Text>
+                
+//                 <div style={{ display: 'flex', height: '42px', borderRadius: '4px', overflow: 'hidden', width: '100%' }}>
+//                   <div style={{ width: `${vipPct}%`, backgroundColor: 'var(--p-color-bg-surface-success-strong)', transition: 'width 0.5s' }} title="VIP & Repeat" />
+//                   <div style={{ width: `${newPct}%`, backgroundColor: 'var(--p-color-bg-surface-info-strong)', transition: 'width 0.5s' }} title="New Buyers" />
+//                   <div style={{ width: `${riskPct}%`, backgroundColor: 'var(--p-color-bg-surface-critical-strong)', transition: 'width 0.5s' }} title="High Risk" />
+//                 </div>
+                
+//                 <InlineGrid columns={3} gap="200">
+//                   <BlockStack>
+//                     <Badge tone="success">Trusted ({Math.round(vipPct)}%)</Badge>
+//                   </BlockStack>
+//                   <BlockStack>
+//                     <Badge tone="info">New ({Math.round(newPct)}%)</Badge>
+//                   </BlockStack>
+//                   <BlockStack>
+//                     <Badge tone="critical">Risk ({Math.round(riskPct)}%)</Badge>
+//                   </BlockStack>
+//                 </InlineGrid>
+//               </BlockStack>
+//             </Card>
+//           </Layout.Section>
+
+//           <Layout.Section variant="oneHalf">
+//             <Card>
+//               <BlockStack gap="400">
+//                 <Text as="h2" variant="headingMd">Live Intelligence Log</Text>
+//                 <Box paddingBlockEnd="200">
+//                   {liveActivity.length > 0 ? (
+//                     <List type="bullet">
+//                       {liveActivity.map((log, index) => (
+//                         <List.Item key={index}>
+//                           <Text as="span" tone={log.tone}>{log.action}: </Text>
+//                           {log.text}
+//                         </List.Item>
+//                       ))}
+//                     </List>
+//                   ) : (
+//                     <Text as="p" tone="subdued">Waiting for incoming order data...</Text>
+//                   )}
+//                 </Box>
+//               </BlockStack>
+//             </Card>
+//           </Layout.Section>
+//         </Layout>
+
+//         <Layout>
+//           <Layout.Section>
+//             <Card background="bg-surface-secondary">
+//               <BlockStack gap="400">
+//                 <Text as="h2" variant="headingMd">Shape the Future of Zippyy</Text>
+//                 <Text as="p">
+//                   Our algorithm adapts to your needs. Notice a fraud trend we missed? Speak directly to our engineering team.
+//                 </Text>
+                
+//                 {/* Dynamically show errors if the action fails */}
+//                 {actionData?.error && (
+//                   <Banner tone="critical" title="Submission Failed">
+//                     {actionData.error}
+//                   </Banner>
+//                 )}
+
+//                 {actionData?.success ? (
+//                   <Banner tone="success" title="Feedback received">
+//                     Thank you. Our engineering team has received your message.
+//                   </Banner>
+//                 ) : (
+//                   <FormLayout>
+//                     <TextField
+//                       label="Feedback"
+//                       labelHidden
+//                       value={feedback}
+//                       onChange={setFeedback}
+//                       multiline={2}
+//                       autoComplete="off"
+//                       placeholder="Example: I need a rule that flags all prepaid orders over 10,000 INR..."
+//                     />
+//                     <InlineGrid columns={{ xs: 1, sm: "auto auto" }} gap="200" alignItems="center">
+//                       <Button 
+//                         variant="primary" 
+//                         onClick={handleFeedbackSubmit} 
+//                         loading={isSubmitting}
+//                         disabled={!feedback}
+//                       >
+//                         Submit Directly to Engineers
+//                       </Button>
+//                     </InlineGrid>
+//                   </FormLayout>
+//                 )}
+//               </BlockStack>
+//             </Card>
+//           </Layout.Section>
+//         </Layout>
+
+//       </BlockStack>
+//     </Page>
+//   );
+// }

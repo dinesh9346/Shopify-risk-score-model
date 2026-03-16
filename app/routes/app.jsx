@@ -5,7 +5,7 @@ import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "../shopify.server";
 
-// 🔹 IMPORT POLARIS STYLES GLOBALLY (ROOT LEVEL)
+//  IMPORT POLARIS STYLES GLOBALLY (ROOT LEVEL)
 import "@shopify/polaris/build/esm/styles.css";
 
 export const loader = async ({ request }) => {
@@ -23,7 +23,10 @@ export default function App() {
       <PolarisAppProvider i18n={enTranslations}>
         <s-app-nav>
           <s-link href="/app">Dashboard</s-link>
-          <s-link href="/app/additional">Buyer Profiles</s-link>
+          <s-link href="/app/risk-engine">Risk Engine</s-link>
+          <s-link href="/app/buyer-profile">Buyer Profiles</s-link>
+          <s-link href="/app/pricing">Pricing</s-link>   
+        
         </s-app-nav>
         <Outlet />
       </PolarisAppProvider>

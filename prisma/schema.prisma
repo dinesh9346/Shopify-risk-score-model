@@ -31,8 +31,10 @@ model shopify_store_order {
   id                String   @id @default(cuid())
   shop              String
   shopifyOrderId    String
-
+  
   customerId        String?
+  firstName         String?
+  lastName          String?
   customerEmail     String?
   customerPhone     String?
 
@@ -42,10 +44,16 @@ model shopify_store_order {
   financialStatus   String?
   fulfillmentStatus String?
 
+  carrier           String?
+  trackingNumber    String?
+  trackingUrl       String?
+  shipmentStatus    String?
+
   ipAddress         String?
   shippingAddress1  String?
   shippingCountry   String?
   billingCountry    String?
+
 
   hasDispute        Boolean  @default(false)
   isRTO             Boolean  @default(false)
@@ -90,7 +98,9 @@ enum RiskLevel {
 model zippyy_buyer_profile {
   id                    String   @id @default(uuid())
   shop                  String
-  buyerIdentifier       String   // The Fallback ID (Phone > Email > CustID > OrderID)
+  buyerIdentifier       String   // This could be email, phone, or customerId - we will use it to link orders to profiles
+  firstName             String?
+  lastName              String?
   customerEmail         String? 
   customerId            String?  
   customerPhone         String?
@@ -118,19 +128,14 @@ model zippyy_buyer_profile {
   @@unique([shop, buyerIdentifier])
   @@schema("risk_score_model")
 }
-// --------------------------------------------------
-// 4. WEBHOOK IDEMPOTENCY
-// --------------------------------------------------
-model store_completed_order {
-  id          String   @id @default(cuid()) // Updated to cuid()
-  shop        String
-  orderId     String
-  customerId  String?  // Made nullable to match StoreOrder guest checkouts
-  orderValue  Float
-  
-  createdAt   DateTime @default(now())
+model merchant_feedback {
+  id        String   @id @default(cuid())
+  shop      String
+  message   String   @db.Text
+  status    String   @default("UNREAD") 
+  createdAt DateTime @default(now())
 
-  @@unique([shop, orderId], name: "shop_orderId")
+  @@index([shop])
+  @@index([createdAt])
   @@schema("risk_score_model")
 }
-

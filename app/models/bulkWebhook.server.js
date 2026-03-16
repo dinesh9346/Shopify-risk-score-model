@@ -66,7 +66,7 @@ export async function handleBulkFinishWebhook(shop, payload) {
   // 3. WAIT for the raw orders to finish saving to the database completely
   await processBulkOrders(operation.url, shop);
 
-  // 🚀 4. THE FIX: Placed inside the function safely!
+  // 4. THE FIX: Placed inside the function safely!
   console.log(`[BULK SYNC] Raw data saved. Firing Profile Aggregation...`);
   await buildHistoricalBuyerProfiles(shop);
   
@@ -104,14 +104,20 @@ async function processBulkOrders(fileUrl, shop) {
 
     const primaryGateway = record.paymentGatewayNames?.[0] || null;
     const isReturned = record.displayFulfillmentStatus === "RETURNED";
+    
+    // NEW LOGIC: Evaluate if the historical order contains any disputes
+    const orderHasDispute = record.disputes && record.disputes.length > 0;
 
     const orderData = {
       shop: shop, // Hard-mapped to ensure Prisma never receives undefined
       shopifyOrderId: record.id,
       customerId: record.customer?.id || null,
+      firstName: record.customer?.firstName || null,
+      lastName: record.customer?.lastName || null,
       customerEmail: record.email || null,
       customerPhone: record.shippingAddress?.phone || record.customer?.phone || null,
       ipAddress: record.clientIp || null,
+      shippingAddress1: record.shippingAddress?.address1 || null,
       shippingCountry: record.shippingAddress?.countryCode || null,
       billingCountry: record.billingAddress?.countryCode || null,
       orderValue: parseFloat(record.totalPriceSet?.shopMoney?.amount || "0"),
@@ -119,7 +125,8 @@ async function processBulkOrders(fileUrl, shop) {
       fulfillmentStatus: record.displayFulfillmentStatus,
       cancelledAt: record.cancelledAt ? new Date(record.cancelledAt) : null,
       paymentGateway: primaryGateway,
-      isRTO: isReturned
+      isRTO: isReturned,
+      hasDispute: orderHasDispute // NEW LOGIC: Map evaluated dispute status to the database
     };
 
     batch.push(orderData);
@@ -137,7 +144,7 @@ async function processBulkOrders(fileUrl, shop) {
     total += batch.length;
   }
 
-  console.log(`✅ [BULK COMPLETE] Total Orders Synced: ${total}`);
+  console.log(`[BULK COMPLETE] Total Orders Synced: ${total}`);
 }
 
 async function saveBatch(batch) {
@@ -164,23 +171,11 @@ async function saveBatch(batch) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 // import prisma from "../db.server.js";
 // import shopify from "../shopify.server.js";
 // import readline from "readline";
 // import { Readable } from "stream";
-
+// import { buildHistoricalBuyerProfiles } from "./Sync.server.js"; 
 
 // // 1. FIXED SIGNATURE: Match the queue router (shop, payload)
 // export async function handleBulkFinishWebhook(shop, payload) {
@@ -241,7 +236,14 @@ async function saveBatch(batch) {
 
 //   console.log("[BULK] Downloading JSONL file");
 
+//   // 3. WAIT for the raw orders to finish saving to the database completely
 //   await processBulkOrders(operation.url, shop);
+
+
+//   console.log(`[BULK SYNC] Raw data saved. Firing Profile Aggregation...`);
+//   await buildHistoricalBuyerProfiles(shop);
+  
+//   // No need to return a Response here because the queue worker handles the success!
 // }
 
 // async function processBulkOrders(fileUrl, shop) {
@@ -283,9 +285,6 @@ async function saveBatch(batch) {
 //       customerEmail: record.email || null,
 //       customerPhone: record.shippingAddress?.phone || record.customer?.phone || null,
 //       ipAddress: record.clientIp || null,
-      
-//       // Removed 'shippingAddress1' because it is not in your schema.prisma
-      
 //       shippingCountry: record.shippingAddress?.countryCode || null,
 //       billingCountry: record.billingAddress?.countryCode || null,
 //       orderValue: parseFloat(record.totalPriceSet?.shopMoney?.amount || "0"),
@@ -311,7 +310,7 @@ async function saveBatch(batch) {
 //     total += batch.length;
 //   }
 
-//   console.log(`✅ [BULK COMPLETE] Total Orders Synced: ${total}`);
+//   console.log(` [BULK COMPLETE] Total Orders Synced: ${total}`);
 // }
 
 // async function saveBatch(batch) {
@@ -330,4 +329,20 @@ async function saveBatch(batch) {
 //     )
 //   );
 // }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
