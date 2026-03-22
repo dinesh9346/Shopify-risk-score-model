@@ -37,6 +37,7 @@ model shopify_store_order {
   lastName          String?
   customerEmail     String?
   customerPhone     String?
+  lineItemsData     String?   @db.Text // @db.Text allows for longer strings if carts get very large (MySQL/PostgreSQL)
 
   orderValue        Decimal  @db.Decimal(10,2)
 
@@ -51,7 +52,16 @@ model shopify_store_order {
 
   ipAddress         String?
   shippingAddress1  String?
+  shippingAddress2  String?
+  shippingCity      String?
+  shippingProvince  String?
+  shippingZip       String?
   shippingCountry   String?
+  billingAddress1   String?
+  billingAddress2   String?
+  billingCity       String?
+  billingProvince   String?
+  billingZip        String?
   billingCountry    String?
 
 

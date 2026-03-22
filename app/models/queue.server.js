@@ -6,7 +6,7 @@ import { calculateAndApplyRiskScore } from "./riskAssessment.server.js";
 import { processOrderUpdate } from "./orderUpdate.server.js";
 import { pushRiskToShopify } from "./pushRiskScore.server.js";
 import { processFulfillmentUpdate } from "./fulfillmentUpdate.server.js";
-const QUEUE_URL = process.env.SQS_QUEUE_URL || "https://sqs.us-west-1.amazonaws.com/571109166839/apac-shopify-data-collection-queue-dev";
+const QUEUE_URL = process.env.SQS_QUEUE_URL || "https://sqs.us-west-1.amazonaws.com/571109166839/apac-shopify-data-collection-queue-dev.fifo";
 
 const sqsClient = new SQSClient({
   region: "us-west-1",
@@ -17,12 +17,14 @@ const sqsClient = new SQSClient({
 });
 
 
- // 1. THE PRODUCER: Pushes webhooks to the SQS Queue
+// 1. THE PRODUCER: Pushes webhooks to the SQS FIFO Queue
  
 export async function enqueueWebhook(topic, shop, payload) {
   const params = {
     QueueUrl: QUEUE_URL,
     MessageBody: JSON.stringify({ topic, shop, data: payload, timestamp: new Date().toISOString() }),
+    MessageGroupId: shop, 
+    
   };
 
   try {
@@ -33,7 +35,6 @@ export async function enqueueWebhook(topic, shop, payload) {
     console.error(` [SQS PRODUCER ERROR] Failed to queue ${topic} for ${shop}:`, error);
   }
 }
-
  // 2. THE CONSUMER: Background loop polling SQS and saving to the database
 
 export async function startQueueListener() {

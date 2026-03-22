@@ -89,60 +89,8 @@ export async function triggerBulkOrderSync(admin, shop) {
     console.error(`[BULK SYNC] Failed to start bulk sync`, error);
   }
 }
-import prisma from "../db.server.js";
 
-/* ================= 1. HELPER: SEGMENTATION BRAIN (DRY) ================= */
-function calculateRiskSegment(profile) {
-  let reasons = [];
-  const total = profile.totalCheckoutAttempts;
-  const rtoRate = total > 0 ? profile.rtoCount / total : 0;
-  const cancelRate = total > 0 ? profile.cancelledCount / total : 0;
-  const codRate = total > 0 ? profile.codCount / total : 0;
 
-  // Evaluate reasons including disputes
-  if (profile.disputeCount > 0) reasons.push("Payment Dispute");
-  if (profile.rtoCount >= 2 && rtoRate >= 0.2) reasons.push("Frequent RTO");
-  if (profile.cancelledCount >= 5 || cancelRate >= 0.5) reasons.push("High Cancellation");
-  if (total >= 10 && profile.validOrderCount === 0) reasons.push("Serial Abandoner (Bot)");
-  if (codRate >= 0.8 && profile.rtoCount >= 1) reasons.push("COD Abuse Risk");
-
-  let segment = "New";
-  if (total > 1) {
-    // 1. Apply Financial Weights
-    const successScore = profile.validOrderCount * 1.0;
-    const cancelPenalty = profile.cancelledCount * 1.0;
-    const rtoPenalty = profile.rtoCount * 2.0;       
-    const disputePenalty = profile.disputeCount * 5.0; 
-
-    // 2. Calculate Net Trust Score
-    const rawScore = successScore - cancelPenalty - rtoPenalty - disputePenalty;
-    const trustIndex = rawScore / total;
-
-    // 3. Mathematical Segmentation
-    if (trustIndex < 0) {
-      segment = "High Risk";
-      reasons.push(`untrustworthy behavior like RTOs, cancellations)`);
-    } 
-    else if (trustIndex >= 0.75) {
-      segment = "VIP";
-    } 
-    else if (trustIndex >= 0.30) {
-      segment = "Repeat Buyer";
-    }
-    else if (trustIndex >= 0.0) {
-      segment = "Watchlist";
-    }
-  } else if (total === 1 && profile.disputeCount > 0) {
-     // Instant penalty if their very first interaction is a dispute
-     segment = "High Risk";
-     reasons.push("Immediate Payment Dispute");
-  }
-
-  return { 
-    segment: segment, 
-    riskReasons: reasons.join(", ") 
-  };
-}
 
 /* ================= 2. BULK PROFILE BUILDER ================= */
 export async function buildHistoricalBuyerProfiles(shop) {
@@ -388,6 +336,76 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
   }
 }
 
+/* ================= 1. HELPER: SEGMENTATION BRAIN (DRY) ================= */
+export function calculateRiskSegment(profile) {
+  let reasons = [];
+  
+  // 1. Ensure we are working with strictly numbers
+  const total = Number(profile.totalCheckoutAttempts || profile.totalorderplaced) || 0;
+  const rto = Number(profile.rtoCount) || 0;
+  const cancelled = Number(profile.cancelledCount) || 0;
+  const disputes = Number(profile.disputeCount) || 0;
+  const unpaid = Number(profile.unpaidCount) || 0; 
+  const cod = Number(profile.codCount) || 0;       
+  const fulfilled = Number(profile.fulfilledCount) || 0;
+  
+  // 2. THE COD SAFETY NET (From Logic 1)
+  let valid = Number(profile.validOrderCount) || 0; 
+  valid = Math.max(valid, fulfilled); 
+
+  // 3. SCALABLE RATES (From Logic 2)
+  const rtoRate = total > 0 ? rto / total : 0;
+  const cancelRate = total > 0 ? cancelled / total : 0;
+  const codRate = total > 0 ? cod / total : 0;
+
+  // 4. EXPLICIT BEHAVIORAL FLAGS (For the UI to display)
+  if (disputes > 0) reasons.push("Payment Dispute");
+  if (rto >= 2 && rtoRate >= 0.2) reasons.push("Frequent RTO");
+  if (cancelled >= 3 && cancelRate >= 0.4) reasons.push("High Cancellation Rate");
+  if (total >= 5 && valid === 0) reasons.push("Spam/Bot Behavior");
+  if (cod >= 3 && codRate >= 0.8 && valid === 0) reasons.push("High COD Abuse Risk");
+
+  // 5. THE MATHEMATICAL ENGINE
+  let segment = "New";
+
+  if (total > 0) {
+    const successScore = valid * 1.0;
+    const cancelPenalty = cancelled * 1.0;
+    const unpaidPenalty = unpaid * 0.5; 
+    const rtoPenalty = rto * 2.0;       
+    const disputePenalty = disputes * 5.0; 
+
+    const rawScore = successScore - cancelPenalty - unpaidPenalty - rtoPenalty - disputePenalty;
+    const trustIndex = rawScore / total;
+
+    // Apply the Mathematical Tiers
+    if (trustIndex < 0) {
+      const hasSevereOffense = rto > 0 || disputes > 0; 
+      
+      if (hasSevereOffense || cancelled >= 2 || unpaid >= 3) {
+        segment = "High Risk";
+        if (reasons.length === 0) reasons.push(`High-Risk Individual`);
+      } else {
+        segment = "Watchlist";
+        if (reasons.length === 0) reasons.push("Needs Monitoring (Negative Score)");
+      }
+    } 
+    else if (trustIndex >= 0.75 && valid >= 2) {
+      segment = "VIP";
+    } 
+    else if (trustIndex >= 0.30 && valid >= 1) {
+      segment = "Repeat Buyer";
+    } 
+    else if (trustIndex >= 0.0 && trustIndex < 0.30 && total > 1) {
+      segment = "Watchlist";
+    }
+  }
+
+  return { 
+    segment: segment, 
+    riskReasons: reasons.length > 0 ? reasons.join(", ") : null 
+  };
+}
 
 
 

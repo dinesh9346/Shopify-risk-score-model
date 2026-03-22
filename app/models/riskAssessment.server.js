@@ -19,11 +19,53 @@ export async function calculateAndApplyRiskScore(shop, payload) {
   const customerEmail = customer?.email || payload.email || null;
 
   const customerPhone = payload.phone || payload.shipping_address?.phone || null;
-  const shippingAddress1 = payload.shipping_address?.address1 || null;
+  const shippingAddress1 = payload.shipping_address?.address1?.trim() || "";
+  const shippingAddress2 = payload.shipping_address?.address2?.trim() || "";
+  const shippingCity = payload.shipping_address?.city?.trim() || "";
+  const shippingProvince = payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || "";
+  const shippingZip = payload.shipping_address?.zip?.trim() || "";
+  const shippingCountry = payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || "";
+  const billingAddress1 = payload.billing_address?.address1?.trim() || "";
+  const billingAddress2 = payload.billing_address?.address2?.trim() || "";
+  const billingCity = payload.billing_address?.city?.trim() || "";
+  const billingProvince = payload.billing_address?.province?.trim() || payload.billing_address?.province_code?.trim() || "";
+  const billingZip = payload.billing_address?.zip?.trim() || "";
+  const billingCountry = payload.billing_address?.country?.trim() || payload.billing_address?.country_code?.trim() || "";
+
   const firstName = customer?.first_name || payload.shipping_address?.first_name || payload.billing_address?.first_name || null;
   const lastName = customer?.last_name || payload.shipping_address?.last_name || payload.billing_address?.last_name || null;
   const orderValue = parseFloat(payload.total_price || "0");
-  const paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
+
+  // Extract standard payment type
+  let paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
+
+  // --- NEW: CATCH ADMIN-CREATED COD ORDERS ---
+  const isDraftOrder = payload.source_name === "shopify_draft_order" || payload.source_name === "2932204";
+  const isPendingPayment = payload.financial_status === "pending";
+  
+  // Safely grab tags and notes to check for merchant clues
+  const orderTags = (payload.tags || "").toLowerCase();
+  const orderNote = (payload.note || "").toLowerCase();
+
+  if (isDraftOrder && isPendingPayment) {
+    // 1. Check if the merchant left a clue in the tags or order notes
+    const hasCodClue = orderTags.includes("cod") || 
+                       orderTags.includes("cash") || 
+                       orderNote.includes("cod") || 
+                       orderNote.includes("cash");
+
+    if (hasCodClue) {
+      paymentType = "Admin_Draft_COD"; // Forces your downstream logic to catch "cod"
+    } 
+    // 2. If no clues, but it's an unknown pending draft, flag it as manual
+    else if (paymentType === "UNKNOWN") {
+      paymentType = "Manual_Pending_Order"; 
+    }
+  }
+
+
+  // --- NEW: Extract product IDs from the current order ---
+  const currentProductIds = payload.line_items?.map(item => item.product_id).filter(Boolean) || [];
 
   // Sync order locally (UPSERT)
   let storeOrderId = null;
@@ -38,8 +80,20 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         paymentGateway: paymentType,
         customerPhone,
         shippingAddress1,
+        shippingAddress2,
+        shippingCity,
+        shippingProvince,
+        shippingZip,
+        shippingCountry,
+        billingAddress1,
+        billingAddress2,
+        billingCity,
+        billingProvince,
+        billingZip,
+        billingCountry,
         firstName,
-        lastName
+        lastName,
+        lineItemsData: JSON.stringify(currentProductIds) // NEW: Save current products
       },
       create: {
         shop,
@@ -52,9 +106,21 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         paymentGateway: paymentType,
         customerPhone,
         shippingAddress1,
+        shippingAddress2,
+        shippingCity,
+        shippingProvince,
+        shippingZip,
+        shippingCountry,
+        billingAddress1,
+        billingAddress2,
+        billingCity,
+        billingProvince,
+        billingZip,
+        billingCountry,
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
-        cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null
+        cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
+        lineItemsData: JSON.stringify(currentProductIds) 
       }
     });
 
@@ -79,6 +145,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
   // Risk Engine
   let score = 0;
   let reasons = [];
+  
   // 1. Name Check (Missing or 2 characters or less)
   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
   if (!fullName || fullName.length <= 2) {
@@ -86,10 +153,23 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     reasons.push({ description: "Suspicious Name (Missing or too short)", sentiment: "NEGATIVE" });
   }
 
-  // 2. Address Check (Address exists, but has no numbers)
-  if (shippingAddress1 && !/\d/.test(shippingAddress1)) {
-    score += 5; // Heavy penalty for fake/incomplete addresses
-    reasons.push({ description: "Address Missing House Number", sentiment: "NEGATIVE" });
+  // 2. Address Check (Missing address OR missing house number)
+  const shippingStreetLines = [shippingAddress1, shippingAddress2]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  if (!shippingStreetLines) {
+    score += 7;
+    reasons.push({ description: "Missing Shipping Address", sentiment: "NEGATIVE" });
+  } else {
+    // Look for at least one digit in the actual street address
+    const hasHouseNumber = /(^|[^\w])(#|no\.?|flat|house|plot|apt|unit)?\s*\d+[a-zA-Z]?/i.test(shippingStreetLines);
+
+    if (!hasHouseNumber) {
+      score += 7;
+      reasons.push({ description: " House Number missing in address", sentiment: "NEGATIVE" });
+    }
   }
 
   // Trackers
@@ -101,7 +181,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
   let refundCount = 0;
   let codCount = 0;
   
-  // NEW: Strict Trackers
+  // Strict Trackers
   let validOrderCount = 0;
   let validTotalSpend = 0;
 
@@ -122,7 +202,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
     const history = pastOrders.filter(o => o.shopifyOrderId !== orderGid);
 
-    // 🔹 We calculate everything in ONE pass, matching the Dashboard logic exactly
+    // We calculate everything in ONE pass, matching the Dashboard logic exactly
     totalOrders = history.length;
     if (totalOrders === 0) {
       reasons.push({ description: "New Customer (No prior order history)", sentiment: "NEUTRAL" });
@@ -131,13 +211,18 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     history.forEach(o => {
       const fStatus = o.financialStatus?.toUpperCase();
       const fulfillment = o.fulfillmentStatus?.toUpperCase();
-      const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
+      
+      const pastGatewayStr = o.paymentGateway?.toLowerCase() || "";
+      const isCod = pastGatewayStr.includes("cod") || 
+                    pastGatewayStr.includes("cash") || 
+                    pastGatewayStr.includes("pay on delivery") || 
+                    pastGatewayStr.includes("pod");
 
       if (isCod) codCount++;
       if (o.hasDispute) disputedCount++;
       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") refundCount++;
 
-      // Logistics Tracking (Identical to Sync.server.js cascade)
+      // Logistics Tracking
       if (o.cancelledAt || fulfillment === "CANCELLED") {
         cancelledCount++;
       } 
@@ -163,7 +248,62 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     // Calculate the success rate (prevent division by zero)
     const successRate = totalOrders > 0 ? (validOrderCount / totalOrders) : 0;
     
-    
+    // --- NEW: SAME PRODUCT ABUSE LOGIC ---
+    if (currentProductIds.length > 0 && history.length > 0) {
+      let maxUnpaidSameProduct = 0;
+      let hasSuccessfulSameProduct = false;
+
+      currentProductIds.forEach(productId => {
+        let unpaidCount = 0;
+        let successCount = 0;
+
+        history.forEach(pastOrder => {
+          let pastProductIds = [];
+          try {
+            // Safely parse the stored line items
+            pastProductIds = pastOrder.lineItemsData ? JSON.parse(pastOrder.lineItemsData) : [];
+          } catch (e) { /* Ignore parse errors on older records */ }
+
+          if (pastProductIds.includes(productId)) {
+            const fStatus = pastOrder.financialStatus?.toUpperCase();
+            const fulfillment = pastOrder.fulfillmentStatus?.toUpperCase();
+            const isClean = !pastOrder.cancelledAt && !(pastOrder.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !pastOrder.hasDispute;
+
+            if ((fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && fulfillment === "FULFILLED" && isClean) {
+              successCount++;
+            } else {
+              unpaidCount++;
+            }
+          }
+        });
+
+        if (unpaidCount > maxUnpaidSameProduct) {
+          maxUnpaidSameProduct = unpaidCount;
+        }
+        if (successCount > 0) {
+          hasSuccessfulSameProduct = true;
+        }
+      });
+
+      // Apply the Risk Scores (Only if there are NO successful purchases of the particular same  product)
+      if (!hasSuccessfulSameProduct) {
+        if (maxUnpaidSameProduct >= 5) {
+          score += 7; // HIGH RISK
+          reasons.push({ 
+            description: `Targeted Hoarding: Customer has ordered this exact product ${maxUnpaidSameProduct} times previously without successfully paying or fulfilling.`, 
+            sentiment: "NEGATIVE" 
+          });
+        } else if (maxUnpaidSameProduct >= 3) {
+          score += 4; // MEDIUM RISK
+          reasons.push({ 
+            description: `Suspicious Repeat Item: Customer has ordered this exact product ${maxUnpaidSameProduct} times previously without completing the purchase.`, 
+            sentiment: "NEGATIVE" 
+          });
+        }
+      }
+    }
+  
+
     // Behavioural Rules with Strict Valid Order Tracking
     if (totalOrders > 0) {
       
@@ -178,7 +318,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         score += 2;
         reasons.push({ description: `This customer has cancelled/returned ${cancelledCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
       } else {
-        reasons.push({ description: `Trusted: This customer has cancelled/returned 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+        reasons.push({ description: `This customer has cancelled/returned 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
       }
 
       // --- 2. Dispute Tracking ---
@@ -186,7 +326,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         score += 7;
         reasons.push({ description: `This customer has disputed ${disputedCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
       } else {
-        reasons.push({ description: `Trusted: This customer has disputed 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+        reasons.push({ description: `This customer has disputed 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
       }
 
       // --- 3. RTO Tracking ---
@@ -197,7 +337,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         score += 2;
         reasons.push({ description: `This customer has ${rtoCount} orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
       } else {
-        reasons.push({ description: `Trusted: This customer has 0 orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+        reasons.push({ description: `This customer has 0 orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
       }
 
       // --- 4. Serial Abandoner Rules (Tiered) ---
@@ -231,40 +371,6 @@ export async function calculateAndApplyRiskScore(shop, payload) {
       }
     }
 
-    // Guest COD risk
-    if (!customer && paymentType.toLowerCase().includes("cod")) {
-      score += 4;
-      reasons.push({ description: `Guest checkout with COD.`, sentiment: "NEGATIVE" });
-    }
-
-    // Address fraud network
-    if (shippingAddress1) {
-      const addressOrders = await prisma.shopify_store_order.findMany({
-        where: { shop, shippingAddress1 }
-      });
-
-      const uniqueCustomers = new Set(addressOrders.map(o => o.customerEmail).filter(Boolean));
-
-      if (uniqueCustomers.size >= 4) {
-        score += 5;
-        reasons.push({ description: `Fraud network suspected: ${uniqueCustomers.size} buyers shipping to the same address.`, sentiment: "NEGATIVE" });
-      }
-    }
-
-    // Phone fraud network
-    if (customerPhone) {
-      const phoneOrders = await prisma.shopify_store_order.findMany({
-        where: { shop, customerPhone }
-      });
-
-      const uniqueCustomers = new Set(phoneOrders.map(o => o.customerEmail).filter(Boolean));
-
-      if (uniqueCustomers.size >= 4) {
-        score += 5;
-        reasons.push({ description: `Fraud network suspected: phone number used by ${uniqueCustomers.size} customers.`, sentiment: "NEGATIVE" });
-      }
-    }
-
     // Value Anomaly (Strictly based on Paid & Delivered history)
     const avgValidSpend = validOrderCount > 0 ? validTotalSpend / validOrderCount : 0;
 
@@ -286,11 +392,59 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     }
   }
 
+  //  COD risk
+  const currentGatewayStr = paymentType.toLowerCase();
+  const isCurrentCod = currentGatewayStr.includes("cod") || 
+                       currentGatewayStr.includes("cash") || 
+                       currentGatewayStr.includes("pay on delivery") || 
+                       currentGatewayStr.includes("pod");
+
+  if (!customer && isCurrentCod) {
+    score += 3;
+    reasons.push({ description: `Guest checkout with COD.`, sentiment: "NEGATIVE" });
+  }
+
+  // --- FIX: Address fraud network (Requires a valid address length) ---
+  if (shippingAddress1 && shippingAddress1.trim().length > 5) {
+    const addressOrders = await prisma.shopify_store_order.findMany({
+      where: { shop, shippingAddress1: shippingAddress1.trim() }
+    });
+
+    const uniqueCustomers = new Set(addressOrders.map(o => o.customerEmail).filter(Boolean));
+
+    if (uniqueCustomers.size >= 4) {
+      score += 5;
+      reasons.push({ description: `Fraud network suspected: ${uniqueCustomers.size} buyers shipping to the same address.`, sentiment: "NEGATIVE" });
+    }
+  }
+
+  // --- FIX: Phone fraud network (Requires a valid phone length) ---
+  if (customerPhone && customerPhone.trim().length > 6) {
+    const phoneOrders = await prisma.shopify_store_order.findMany({
+      where: { shop, customerPhone: customerPhone.trim() }
+    });
+
+    const uniqueCustomers = new Set(phoneOrders.map(o => o.customerEmail).filter(Boolean));
+
+    if (uniqueCustomers.size >= 4) {
+      score += 5;
+      reasons.push({ description: `Fraud network suspected: phone number used by ${uniqueCustomers.size} customers.`, sentiment: "NEGATIVE" });
+    }
+  }
+
   // Final Risk Level
   let riskLevel = "LOW";
 
   if (score >= 7) riskLevel = "HIGH";
   else if (score >= 3) riskLevel = "MEDIUM";
+  
+  // Sort reasons by sentiment for better readability
+  reasons.sort((a, b) => {
+    const sortOrder = { "NEGATIVE": 1, "NEUTRAL": 2, "POSITIVE": 3 };
+    const rankA = sortOrder[a.sentiment] || 4; // Default to 4 if sentiment is missing
+    const rankB = sortOrder[b.sentiment] || 4;
+    return rankA - rankB;
+  });
 
   console.log(`\n=== RISK ASSESSMENT RESULT ===`);
   console.log(`Risk Level: ${riskLevel} (Score: ${score})`);
@@ -338,18 +492,11 @@ export async function calculateAndApplyRiskScore(shop, payload) {
   return new Response();
 }
 
-
-
-
-
-
-
-
 // import prisma from "../db.server.js";
 // import { enqueueOutboundRisk } from "./queue.server.js";
 // import { updateSingleBuyerProfile } from "./Sync.server.js";
-// export async function calculateAndApplyRiskScore(shop, payload) {
 
+// export async function calculateAndApplyRiskScore(shop, payload) {
 //   // IDEMPOTENCY CHECK
 //   if (payload.tags && payload.tags.includes("Zippyy:")) {
 //     console.log(`[Idempotency] Order ${payload.id} already assessed. Skipping duplicate webhook.`);
@@ -358,7 +505,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
 //   console.log(`Starting Risk Assessment for Order: ${payload.id}`);
 
-//   // 🔹 Extract Order Data
+//   // Extract Order Data
 //   const orderGid = payload.admin_graphql_api_id;
 //   const customer = payload.customer;
 
@@ -366,12 +513,54 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //   const customerEmail = customer?.email || payload.email || null;
 
 //   const customerPhone = payload.phone || payload.shipping_address?.phone || null;
-//   const shippingAddress1 = payload.shipping_address?.address1 || null;
+//   const shippingAddress1 = payload.shipping_address?.address1?.trim() || "";
+//   const shippingAddress2 = payload.shipping_address?.address2?.trim() || "";
+//   const shippingCity = payload.shipping_address?.city?.trim() || "";
+//   const shippingProvince = payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || "";
+//   const shippingZip = payload.shipping_address?.zip?.trim() || "";
+//   const shippingCountry = payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || "";
+//   const billingAddress1 = payload.billing_address?.address1?.trim() || "";
+//   const billingAddress2 = payload.billing_address?.address2?.trim() || "";
+//   const billingCity = payload.billing_address?.city?.trim() || "";
+//   const billingProvince = payload.billing_address?.province?.trim() || payload.billing_address?.province_code?.trim() || "";
+//   const billingZip = payload.billing_address?.zip?.trim() || "";
+//   const billingCountry = payload.billing_address?.country?.trim() || payload.billing_address?.country_code?.trim() || "";
 
+//   const firstName = customer?.first_name || payload.shipping_address?.first_name || payload.billing_address?.first_name || null;
+//   const lastName = customer?.last_name || payload.shipping_address?.last_name || payload.billing_address?.last_name || null;
 //   const orderValue = parseFloat(payload.total_price || "0");
-//   const paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
+// // Extract standard payment type
+//   let paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
 
-//   // 🔹 Sync order locally (UPSERT)
+//   // --- NEW: CATCH ADMIN-CREATED COD ORDERS ---
+//   const isDraftOrder = payload.source_name === "shopify_draft_order" || payload.source_name === "2932204";
+//   const isPendingPayment = payload.financial_status === "pending";
+  
+//   // Safely grab tags and notes to check for merchant clues
+//   const orderTags = (payload.tags || "").toLowerCase();
+//   const orderNote = (payload.note || "").toLowerCase();
+
+//   if (isDraftOrder && isPendingPayment) {
+//     // 1. Check if the merchant left a clue in the tags or order notes
+//     const hasCodClue = orderTags.includes("cod") || 
+//                        orderTags.includes("cash") || 
+//                        orderNote.includes("cod") || 
+//                        orderNote.includes("cash");
+
+//     if (hasCodClue) {
+//       paymentType = "Admin_Draft_COD"; // Forces your downstream logic to catch "cod"
+//     } 
+//     // 2. If no clues, but it's an unknown pending draft, flag it as manual
+//     else if (paymentType === "UNKNOWN") {
+//       paymentType = "Manual_Pending_Order"; 
+//     }
+//   }
+
+
+//   // --- NEW: Extract product IDs from the current order ---
+//   const currentProductIds = payload.line_items?.map(item => item.product_id).filter(Boolean) || [];
+
+//   // Sync order locally (UPSERT)
 //   let storeOrderId = null;
 
 //   try {
@@ -383,20 +572,48 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
 //         paymentGateway: paymentType,
 //         customerPhone,
-//         shippingAddress1
+//         shippingAddress1,
+//         shippingAddress2,
+//         shippingCity,
+//         shippingProvince,
+//         shippingZip,
+//         shippingCountry,
+//         billingAddress1,
+//         billingAddress2,
+//         billingCity,
+//         billingProvince,
+//         billingZip,
+//         billingCountry,
+//         firstName,
+//         lastName,
+//         lineItemsData: JSON.stringify(currentProductIds) // NEW: Save current products
 //       },
 //       create: {
 //         shop,
 //         shopifyOrderId: orderGid,
 //         customerId,
+//         firstName,
+//         lastName,
 //         customerEmail,
 //         orderValue,
 //         paymentGateway: paymentType,
 //         customerPhone,
 //         shippingAddress1,
+//         shippingAddress2,
+//         shippingCity,
+//         shippingProvince,
+//         shippingZip,
+//         shippingCountry,
+//         billingAddress1,
+//         billingAddress2,
+//         billingCity,
+//         billingProvince,
+//         billingZip,
+//         billingCountry,
 //         financialStatus: payload.financial_status,
 //         fulfillmentStatus: payload.fulfillment_status,
-//         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null
+//         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
+//         lineItemsData: JSON.stringify(currentProductIds) 
 //       }
 //     });
 
@@ -418,9 +635,35 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //     }
 //   }
 
-//   //  Risk Engine
+//   // Risk Engine
 //   let score = 0;
 //   let reasons = [];
+  
+//   // 1. Name Check (Missing or 2 characters or less)
+//   const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+//   if (!fullName || fullName.length <= 2) {
+//     score += 5; // Heavy penalty for bot names
+//     reasons.push({ description: "Suspicious Name (Missing or too short)", sentiment: "NEGATIVE" });
+//   }
+
+//   // 2. Address Check (Missing address OR missing house number)
+//   const shippingStreetLines = [shippingAddress1, shippingAddress2]
+//     .filter(Boolean)
+//     .join(" ")
+//     .trim();
+
+//   if (!shippingStreetLines) {
+//     score += 7;
+//     reasons.push({ description: "Missing Shipping Address", sentiment: "NEGATIVE" });
+//   } else {
+//     // Look for at least one digit in the actual street address
+//     const hasHouseNumber = /(^|[^\w])(#|no\.?|flat|house|plot|apt|unit)?\s*\d+[a-zA-Z]?/i.test(shippingStreetLines);
+
+//     if (!hasHouseNumber) {
+//       score += 7;
+//       reasons.push({ description: " House Number missing in address", sentiment: "NEGATIVE" });
+//     }
+//   }
 
 //   // Trackers
 //   let totalOrders = 0;
@@ -431,7 +674,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //   let refundCount = 0;
 //   let codCount = 0;
   
-//   //  NEW: Strict Trackers
+//   // Strict Trackers
 //   let validOrderCount = 0;
 //   let validTotalSpend = 0;
 
@@ -452,50 +695,129 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
 //     const history = pastOrders.filter(o => o.shopifyOrderId !== orderGid);
 
+//     // We calculate everything in ONE pass, matching the Dashboard logic exactly
 //     totalOrders = history.length;
-//     cancelledCount = history.filter(o => o.cancelledAt !== null).length;
-//     disputedCount = history.filter(o => o.hasDispute === true).length;
-//     rtoCount = history.filter(o => o.isRTO === true).length;
-//     refundCount = history.filter(o => ["REFUNDED", "PARTIALLY_REFUNDED"].includes(o.financialStatus?.toUpperCase())).length;
-//     codCount = history.filter(o => o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash")).length;
+//     if (totalOrders === 0) {
+//       reasons.push({ description: "New Customer (No prior order history)", sentiment: "NEUTRAL" });
+//     }
 
-//     // Calculate Spends & Valid Orders
 //     history.forEach(o => {
-//       const val = Number(o.orderValue || 0);
-//       totalSpend += val;
+//       const fStatus = o.financialStatus?.toUpperCase();
+//       const fulfillment = o.fulfillmentStatus?.toUpperCase();
+//       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
 
-//       const isPaid = o.financialStatus?.toUpperCase() === "PAID";
-//       const isFulfilled = o.fulfillmentStatus?.toUpperCase() === "FULFILLED";
+//       if (isCod) codCount++;
+//       if (o.hasDispute) disputedCount++;
+//       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") refundCount++;
 
-//       // Strict validation: Paid + Fulfilled + No Disputes + No Cancels + No RTO
-//       if (isPaid && isFulfilled && !o.hasDispute && !o.cancelledAt && !o.isRTO) {
-//         validOrderCount++;
-//         validTotalSpend += val;
+//       // Logistics Tracking
+//       if (o.cancelledAt || fulfillment === "CANCELLED") {
+//         cancelledCount++;
+//       } 
+//       else if (o.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
+//         rtoCount++;
 //       }
+
+//       // Valid Order Gatekeeper
+//       const isClean = !o.cancelledAt && !(o.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !o.hasDispute;
+//       if ((fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && fulfillment === "FULFILLED" && isClean) {
+//         validOrderCount++;
+//         validTotalSpend += Number(o.orderValue || 0);
+//       }
+
+//       totalSpend += Number(o.orderValue || 0);
 //     });
 
 //     let cancelRate = totalOrders > 0 ? cancelledCount / totalOrders : 0;
 //     let rtoRate = totalOrders > 0 ? rtoCount / totalOrders : 0;
 //     let refundRate = totalOrders > 0 ? refundCount / totalOrders : 0;
 //     let codRate = totalOrders > 0 ? codCount / totalOrders : 0;
-//     //  Behavioural Rules with Strict Valid Order Tracking
+    
+//     // Calculate the success rate (prevent division by zero)
+//     const successRate = totalOrders > 0 ? (validOrderCount / totalOrders) : 0;
+    
+//     // --- NEW: SAME PRODUCT ABUSE LOGIC ---
+//     if (currentProductIds.length > 0 && history.length > 0) {
+//       let maxUnpaidSameProduct = 0;
+//       let hasSuccessfulSameProduct = false;
+
+//       currentProductIds.forEach(productId => {
+//         let unpaidCount = 0;
+//         let successCount = 0;
+
+//         history.forEach(pastOrder => {
+//           let pastProductIds = [];
+//           try {
+//             // Safely parse the stored line items
+//             pastProductIds = pastOrder.lineItemsData ? JSON.parse(pastOrder.lineItemsData) : [];
+//           } catch (e) { /* Ignore parse errors on older records */ }
+
+//           if (pastProductIds.includes(productId)) {
+//             const fStatus = pastOrder.financialStatus?.toUpperCase();
+//             const fulfillment = pastOrder.fulfillmentStatus?.toUpperCase();
+//             const isClean = !pastOrder.cancelledAt && !(pastOrder.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !pastOrder.hasDispute;
+
+//             if ((fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && fulfillment === "FULFILLED" && isClean) {
+//               successCount++;
+//             } else {
+//               unpaidCount++;
+//             }
+//           }
+//         });
+
+//         if (unpaidCount > maxUnpaidSameProduct) {
+//           maxUnpaidSameProduct = unpaidCount;
+//         }
+//         if (successCount > 0) {
+//           hasSuccessfulSameProduct = true;
+//         }
+//       });
+
+//       // Apply the Risk Scores (Only if there are NO successful purchases of the particular same  product)
+//       if (!hasSuccessfulSameProduct) {
+//         if (maxUnpaidSameProduct >= 5) {
+//           score += 7; // HIGH RISK
+//           reasons.push({ 
+//             description: `Targeted Hoarding: Customer has ordered this exact product ${maxUnpaidSameProduct} times previously without successfully paying or fulfilling.`, 
+//             sentiment: "NEGATIVE" 
+//           });
+//         } else if (maxUnpaidSameProduct >= 3) {
+//           score += 4; // MEDIUM RISK
+//           reasons.push({ 
+//             description: `Suspicious Repeat Item: Customer has ordered this exact product ${maxUnpaidSameProduct} times previously without completing the purchase.`, 
+//             sentiment: "NEGATIVE" 
+//           });
+//         }
+//       }
+//     }
+  
+
+//     // Behavioural Rules with Strict Valid Order Tracking
 //     if (totalOrders > 0) {
-//        if (cancelledCount >= 5) {
+      
+//       // --- 1. Tiered Cancellation Rules ---
+//       if (cancelledCount >= 15 || (totalOrders >= 10 && cancelRate >= 0.20)) {
+//         score += 7;
+//         reasons.push({ description: `High Cancellation: ${cancelledCount} orders cancelled (${Math.round(cancelRate * 100)}%).`, sentiment: "NEGATIVE" });
+//       } else if (cancelledCount >= 5) {
 //         score += 4;
 //         reasons.push({ description: `This customer has cancelled/returned ${cancelledCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
 //       } else if (cancelledCount >= 1) {
 //         score += 2;
 //         reasons.push({ description: `This customer has cancelled/returned ${cancelledCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
 //       } else {
-//         reasons.push({ description: `Trusted: This customer has cancelled/returned 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
-//       }
-//       if (disputedCount > 0) {
-//         score += 5;
-//         reasons.push({ description: `This customer has disputed ${disputedCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
-//       } else {
-//         reasons.push({ description: `Trusted: This customer has disputed 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+//         reasons.push({ description: ` This customer has cancelled/returned 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
 //       }
 
+//       // --- 2. Dispute Tracking ---
+//       if (disputedCount > 0) {
+//         score += 7;
+//         reasons.push({ description: `This customer has disputed ${disputedCount} orders out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
+//       } else {
+//         reasons.push({ description: `This customer has disputed 0 orders out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+//       }
+
+//       // --- 3. RTO Tracking ---
 //       if (rtoCount >= 3) {
 //         score += 4;
 //         reasons.push({ description: `This customer has ${rtoCount} orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
@@ -503,44 +825,71 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //         score += 2;
 //         reasons.push({ description: `This customer has ${rtoCount} orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "NEGATIVE" });
 //       } else {
-//         reasons.push({ description: `Trusted: This customer has 0 orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+//         reasons.push({ description: `This customer has 0 orders marked as RTO out of the recent ${totalOrders} orders.`, sentiment: "POSITIVE" });
+//       }
+
+//       // --- 4. Serial Abandoner Rules (Tiered) ---
+//       if (totalOrders >= 10 && validOrderCount === 0) {
+//         score += 6;
+//         reasons.push({ description: `Serial order abandoner: ${totalOrders} orders but 0 successful purchases.`, sentiment: "NEGATIVE" });
+//       } else if (totalOrders >= 15 && successRate <= 0.05) {
+//         score += 7;
+//         reasons.push({ description: `Severe abandonment rate: ${totalOrders} orders placed, but only ${validOrderCount} successful (${Math.round(successRate * 100)}%).`, sentiment: "NEGATIVE" });
+//       } else if (totalOrders >= 10 && successRate <= 0.15) {
+//         score += 4; 
+//         reasons.push({ description: `High abandonment rate: ${totalOrders} orders placed, but only ${validOrderCount} successful.`, sentiment: "NEGATIVE" });
+//       }
+
+//       // --- 5. Suspicious Zero-Value Orders ---
+//       if (totalOrders >= 20 && totalSpend === 0) {
+//         score += 5;
+//         reasons.push({ description: `Suspicious buyer: ${totalOrders} orders with zero purchase value.`, sentiment: "NEGATIVE" });
+//       }
+
+//       // --- 6. Refund abuse ---
+//       if (refundRate >= 0.5 && totalOrders >= 3) {
+//         score += 4;
+//         reasons.push({ description: `High refund rate (${Math.round(refundRate * 100)}%).`, sentiment: "NEGATIVE" });
+//       }
+
+//       // --- 7. COD abuse ---
+//       if (codRate >= 0.7 && rtoCount >= 1 && totalOrders >= 3) {
+//         score += 4;
+//         reasons.push({ description: `COD abuse suspected (${codCount}/${totalOrders} COD orders with RTO history).`, sentiment: "NEGATIVE" });
 //       }
 //     }
-//     // Serial Abandoner Rule (Now strictly requires 0 Valid Orders)
-//     if (totalOrders >= 10 && validOrderCount === 0) {
-//       score += 6;
-//       reasons.push({ description: `Serial order abandoner: ${totalOrders} orders but 0 successful purchases.`, sentiment: "NEGATIVE" });
+
+//     // Value Anomaly (Strictly based on Paid & Delivered history)
+//     const avgValidSpend = validOrderCount > 0 ? validTotalSpend / validOrderCount : 0;
+
+//     if (orderValue > avgValidSpend * 5 && avgValidSpend > 0) {
+//       score += 3;
+//       reasons.push({
+//         description: `Order value unusually high compared to customer's successful purchase history.`,
+//         sentiment: "NEGATIVE"
+//       });
 //     }
 
-//     // Suspicious Zero-Value Orders
-//     if (totalOrders >= 20 && totalSpend === 0) {
-//       score += 5;
-//       reasons.push({ description: `Suspicious buyer: ${totalOrders} orders with zero purchase value.`, sentiment: "NEGATIVE" });
-//     }
-
-//     // Refund abuse
-//     if (refundRate >= 0.5 && totalOrders >= 3) {
-//       score += 4;
-//       reasons.push({ description: `High refund rate (${Math.round(refundRate * 100)}%).`, sentiment: "NEGATIVE" });
-//     }
-
-//     // COD abuse
-//     if (codRate >= 0.7 && rtoCount >= 1 && totalOrders >= 3) {
-//       score += 4;
-//       reasons.push({ description: `COD abuse suspected (${codCount}/${totalOrders} COD orders with RTO history).`, sentiment: "NEGATIVE" });
+//     // Loyalty Signals (Strictly based on Paid & Delivered history)
+//     if (validOrderCount >= 5) {
+//       score -= 3;
+//       reasons.push({
+//         description: `Loyal repeat buyer (${validOrderCount} paid & delivered orders).`,
+//         sentiment: "POSITIVE"
+//       });
 //     }
 //   }
 
-//   // Guest COD risk
+//   //  COD risk
 //   if (!customer && paymentType.toLowerCase().includes("cod")) {
 //     score += 4;
 //     reasons.push({ description: `Guest checkout with COD.`, sentiment: "NEGATIVE" });
 //   }
 
-//   // Address fraud network
-//   if (shippingAddress1) {
+//   // --- FIX: Address fraud network (Requires a valid address length) ---
+//   if (shippingAddress1 && shippingAddress1.trim().length > 5) {
 //     const addressOrders = await prisma.shopify_store_order.findMany({
-//       where: { shop, shippingAddress1 }
+//       where: { shop, shippingAddress1: shippingAddress1.trim() }
 //     });
 
 //     const uniqueCustomers = new Set(addressOrders.map(o => o.customerEmail).filter(Boolean));
@@ -551,10 +900,10 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //     }
 //   }
 
-//   // Phone fraud network
-//   if (customerPhone) {
+//   // --- FIX: Phone fraud network (Requires a valid phone length) ---
+//   if (customerPhone && customerPhone.trim().length > 6) {
 //     const phoneOrders = await prisma.shopify_store_order.findMany({
-//       where: { shop, customerPhone }
+//       where: { shop, customerPhone: customerPhone.trim() }
 //     });
 
 //     const uniqueCustomers = new Set(phoneOrders.map(o => o.customerEmail).filter(Boolean));
@@ -565,31 +914,19 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 //     }
 //   }
 
-
-//   // Value Anomaly (Strictly based on Paid & Delivered history)
-//   const avgValidSpend = validOrderCount > 0 ? validTotalSpend / validOrderCount : 0;
-
-//   if (orderValue > avgValidSpend * 5 && avgValidSpend > 0) {
-//     score += 3;
-//     reasons.push({
-//       description: `Order value unusually high compared to customer's successful purchase history.`,
-//       sentiment: "NEGATIVE"
-//     });
-//   }
-
-//   //  Loyalty Signals (Strictly based on Paid & Delivered history)
-//   if (validOrderCount >= 5) {
-//     score -= 3;
-//     reasons.push({
-//       description: `Loyal repeat buyer (${validOrderCount} paid & delivered orders).`,
-//       sentiment: "POSITIVE"
-//     });
-//   }
 //   // Final Risk Level
 //   let riskLevel = "LOW";
 
 //   if (score >= 7) riskLevel = "HIGH";
 //   else if (score >= 3) riskLevel = "MEDIUM";
+  
+//   // Sort reasons by sentiment for better readability
+//   reasons.sort((a, b) => {
+//     const sortOrder = { "NEGATIVE": 1, "NEUTRAL": 2, "POSITIVE": 3 };
+//     const rankA = sortOrder[a.sentiment] || 4; // Default to 4 if sentiment is missing
+//     const rankB = sortOrder[b.sentiment] || 4;
+//     return rankA - rankB;
+//   });
 
 //   console.log(`\n=== RISK ASSESSMENT RESULT ===`);
 //   console.log(`Risk Level: ${riskLevel} (Score: ${score})`);
@@ -598,7 +935,8 @@ export async function calculateAndApplyRiskScore(shop, payload) {
  
 //   // --- UPSERT THE BUYER PROFILE FOR THE DASHBOARD ---
 //   await updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid);
-//   // Save Score (UPSERT) the risk score to our local database for quick retrieval in the dashboard and future reference
+  
+//   // Save Score (UPSERT) the risk score to our local database for quick retrieval
 //   try {
 //     await prisma.zippyy_risk_score.upsert({
 //       where: { orderId: storeOrderId },
@@ -635,3 +973,13 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
 //   return new Response();
 // }
+
+
+
+
+
+
+
+
+
+

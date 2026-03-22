@@ -25,11 +25,11 @@ api_version = "2026-04"
 
  [[webhooks.subscriptions]]
  topics = [ "fulfillments/create"]
- uri = "/webhooks/fulfillment/create"
+ uri = "/webhooks/fulfillments/create"
 
  [[webhooks.subscriptions]]
  topics = [ "fulfillments/update"]
- uri = "/webhooks/fulfillment/update"
+ uri = "/webhooks/fulfillment/updated"
 
 
 

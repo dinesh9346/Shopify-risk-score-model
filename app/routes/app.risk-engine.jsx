@@ -1,6 +1,8 @@
-import { useLoaderData, useSearchParams } from "react-router";
+import { useLoaderData, useSearchParams, useRevalidator  } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState, useMemo, useEffect } from "react"; 
+
+
 
 import "@shopify/polaris/build/esm/styles.css";
 import enTranslations from "@shopify/polaris/locales/en.json";
@@ -163,6 +165,9 @@ function DashboardUI() {
   
   const [selectedTab, setSelectedTab] = useState(0);
 
+  // ✅ Refresh hook (manual only)
+  const { revalidate, state } = useRevalidator();
+
   // Sync the UI tab state with the URL parameter perfectly
   useEffect(() => {
     if (tabParam === "high-risk") setSelectedTab(1);
@@ -241,7 +246,15 @@ function DashboardUI() {
   );
 
   return (
-    <Page title="Zippyy Risk Engine" subtitle="Real-time fraud analysis and prevention">
+    <Page 
+      title="Zippyy Risk Engine" 
+      subtitle="Real-time fraud analysis and prevention"
+      primaryAction={{
+        content: "Refresh Data",
+        onAction: () => revalidate(),
+        loading: state === "loading",
+      }}
+    >
       <Layout>
         <Layout.Section>
           <Banner tone="info">
@@ -330,23 +343,14 @@ export const headers = (headersArgs) => {
 };
 
 
-
-
-
-
-
-
-
-
-
-
-
-
+// import { useLoaderData, useSearchParams } from "react-router";
 // import { boundary } from "@shopify/shopify-app-react-router/server";
-// import { useState, useMemo } from "react"; 
+// import { useState, useMemo, useEffect } from "react"; 
+
+
 // import "@shopify/polaris/build/esm/styles.css";
 // import enTranslations from "@shopify/polaris/locales/en.json";
-// import { useLoaderData, useSearchParams } from "react-router";
+
 // import {
 //   AppProvider,
 //   Page,
@@ -441,6 +445,7 @@ export const headers = (headersArgs) => {
 //     </Badge>
 //   );
 // };
+
 // const ReasonsPopover = ({ reasons, active, onToggle }) => {
 //   const reasonsList = reasons
 //     ? reasons.split(/[|,\n]/).map((r) => r.trim()).filter(Boolean)
@@ -461,8 +466,6 @@ export const headers = (headersArgs) => {
 //     >
 //       <Box padding="400" width="350px">
 //         <BlockStack gap="300">
-          
-//           {/* Header row with Title and Close Button */}
 //           <InlineStack align="space-between" blockAlign="center">
 //             <Text variant="headingSm" as="h3">Assessment Reasons</Text>
 //             <Button onClick={onToggle} plain tone="critical">Close</Button>
@@ -500,8 +503,18 @@ export const headers = (headersArgs) => {
 //   const data = useLoaderData() || {};
 //   const [activePopoverId, setActivePopoverId] = useState(null);
   
-//   // NEW: State for Tabs
+//   // URL Param checking
+//   const [searchParams, setSearchParams] = useSearchParams();
+//   const tabParam = searchParams.get("tab");
+  
 //   const [selectedTab, setSelectedTab] = useState(0);
+
+//   // Sync the UI tab state with the URL parameter perfectly
+//   useEffect(() => {
+//     if (tabParam === "high-risk") setSelectedTab(1);
+//     else if (tabParam === "medium-risk") setSelectedTab(2);
+//     else setSelectedTab(0);
+//   }, [tabParam]);
 
 //   if (!data || data.error) {
 //     return (
@@ -517,21 +530,25 @@ export const headers = (headersArgs) => {
 //   const kpis = data.kpis || { totalAnalyzed: 0, highRiskCount: 0, mediumRiskCount: 0 };
 //   const orderCount = data.orderCount || 0;
 
-//   // NEW: Tab Definitions
 //   const tabs = [
 //     { id: "all", content: "All Analyzed" },
 //     { id: "high-risk", content: "High Risk" },
 //     { id: "medium-risk", content: "Medium Risk" },
 //   ];
 
-//   // NEW: Filter data based on selected tab
+//   const handleTabChange = (selectedTabIndex) => {
+//     setSelectedTab(selectedTabIndex);
+//     if (selectedTabIndex === 1) setSearchParams({ tab: "high-risk" }, { replace: true });
+//     else if (selectedTabIndex === 2) setSearchParams({ tab: "medium-risk" }, { replace: true });
+//     else setSearchParams({}, { replace: true });
+//   };
+
 //   const filteredScores = useMemo(() => {
 //     if (selectedTab === 1) return recentScores.filter((s) => s.riskLevel === "HIGH");
 //     if (selectedTab === 2) return recentScores.filter((s) => s.riskLevel === "MEDIUM");
-//     return recentScores; // selectedTab === 0 (All)
+//     return recentScores;
 //   }, [recentScores, selectedTab]);
 
-//   // Use filteredScores to generate rows instead of recentScores
 //   const rows = filteredScores.map(
 //     ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName }, index) => {
 //       const cleanId = orderId ? orderId.replace("gid://shopify/Order/", "") : "N/A";
@@ -546,38 +563,17 @@ export const headers = (headersArgs) => {
 //         : "N/A";
 
 //       return (
-//         <IndexTable.Row
-//           id={id}
-//           key={id}
-//           position={index}
-//         >
+//         <IndexTable.Row id={id} key={id} position={index}>
+//           <IndexTable.Cell><Text as="span">{formattedDate}</Text></IndexTable.Cell>
 //           <IndexTable.Cell>
-//             <Text as="span">{formattedDate}</Text>
-//           </IndexTable.Cell>
-
-//           <IndexTable.Cell>
-//             {/* Order Link for App Bridge navigation */}
 //             <Link url={`shopify:admin/orders/${cleanId}`} removeUnderline target="_top">
 //               <Text fontWeight="bold" as="span">#{cleanId}</Text>
 //             </Link>
 //           </IndexTable.Cell>
-
-//           <IndexTable.Cell>
-//             <Text as="span">{customerName}</Text>
-//           </IndexTable.Cell>
-
-//           <IndexTable.Cell>
-//             <Text as="span" numeric>₹{Number(orderValue || 0).toFixed(2)}</Text>
-//           </IndexTable.Cell>
-
-//           <IndexTable.Cell>
-//             <Badge tone="info">{paymentType || "UNKNOWN"}</Badge>
-//           </IndexTable.Cell>
-
-//           <IndexTable.Cell>
-//             <RiskBadge level={riskLevel} />
-//           </IndexTable.Cell>
-
+//           <IndexTable.Cell><Text as="span">{customerName}</Text></IndexTable.Cell>
+//           <IndexTable.Cell><Text as="span" numeric>₹{Number(orderValue || 0).toFixed(2)}</Text></IndexTable.Cell>
+//           <IndexTable.Cell><Badge tone="info">{paymentType || "UNKNOWN"}</Badge></IndexTable.Cell>
+//           <IndexTable.Cell><RiskBadge level={riskLevel} /></IndexTable.Cell>
 //           <IndexTable.Cell>
 //             <ReasonsPopover 
 //               reasons={reasons} 
@@ -595,9 +591,7 @@ export const headers = (headersArgs) => {
 //       <Layout>
 //         <Layout.Section>
 //           <Banner tone="info">
-//             <p>
-//               Your Data Warehouse is synced and actively monitoring <strong>{orderCount}</strong> historical orders.
-//             </p>
+//             <p>Your Data Warehouse is synced and actively monitoring <strong>{orderCount}</strong> historical orders.</p>
 //           </Banner>
 //         </Layout.Section>
 
@@ -634,15 +628,14 @@ export const headers = (headersArgs) => {
 
 //         <Layout.Section>
 //           <Card padding="0">
-//             {/* NEW: Added Tabs above the table */}
-//             <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} fitted />
+//             <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange} fitted />
             
 //             <Box padding="400">
 //               <Text variant="headingMd" as="h2">Actionable Intelligence Log</Text>
 //             </Box>
 //             <IndexTable
 //               resourceName={{ singular: "order", plural: "orders" }}
-//               itemCount={filteredScores.length} // Updated to use filtered length
+//               itemCount={filteredScores.length}
 //               selectable={false} 
 //               headings={[
 //                 { title: "Date" },
@@ -655,9 +648,7 @@ export const headers = (headersArgs) => {
 //               ]}
 //               emptyState={
 //                 <Box padding="400">
-//                   <Text alignment="center" tone="subdued">
-//                     No matching risk scores found.
-//                   </Text>
+//                   <Text alignment="center" tone="subdued">No matching risk scores found.</Text>
 //                 </Box>
 //               }
 //             >
@@ -683,14 +674,6 @@ export const headers = (headersArgs) => {
 // export const headers = (headersArgs) => {
 //   return boundary.headers(headersArgs);
 // };
-
-
-
-
-
-
-
-
 
 
 

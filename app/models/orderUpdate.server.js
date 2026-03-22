@@ -15,8 +15,14 @@ export async function processOrderUpdate(shop, payload) {
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
-       isRTO: ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
-           payload.financial_status?.toLowerCase() === "refunded"
+        isRTO: ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
+           payload.financial_status?.toLowerCase() === "refunded",
+        shippingAddress1: payload.shipping_address?.address1?.trim() || undefined,
+        shippingAddress2: payload.shipping_address?.address2?.trim() || undefined,
+        shippingCity: payload.shipping_address?.city?.trim() || undefined,
+        shippingProvince: payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || undefined,
+        shippingZip: payload.shipping_address?.zip?.trim() || undefined,
+        shippingCountry: payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || undefined,
       }
     });
 
