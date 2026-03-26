@@ -175,8 +175,8 @@ function Extension() {
           </s-stack>
           
           <s-stack direction="inline" inline-alignment="space-between">
-            <s-text>Checkout Attempts:</s-text>
-            <s-text type="strong">{profile.totalCheckoutAttempts}</s-text>
+            <s-text>Total Orders:</s-text>
+            <s-text type="strong">{profile.totalorders}</s-text>
           </s-stack>
         </s-stack>
 
@@ -391,8 +391,8 @@ function Extension() {
 //           </s-stack>
           
 //           <s-stack direction="inline" inline-alignment="space-between">
-//             <s-text>Checkout Attempts:</s-text>
-//             <s-text type="strong">{profile.totalCheckoutAttempts}</s-text>
+//             <s-text>Total Orders:</s-text>
+//             <s-text type="strong">{profile.totalorders}</s-text>
 //           </s-stack>
 //         </s-stack>
 

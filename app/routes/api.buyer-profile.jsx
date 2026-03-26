@@ -83,7 +83,7 @@
 //         disputeCount: profile.disputeCount,
 //         refundCount: profile.refundCount,
 //         totalSpend: profile.totalSpend,
-//         totalCheckoutAttempts: profile.totalCheckoutAttempts,
+//         totalordersoutAttempts,
 //         codCount: profile.codCount,
 //         fulfilledCount: profile.fulfilledCount,
 //         unpaidCount: profile.unpaidCount
@@ -177,7 +177,7 @@ export const loader = async ({ request }) => {
         disputeCount: profile.disputeCount,
         refundCount: profile.refundCount,
         totalSpend: profile.totalSpend,
-        totalCheckoutAttempts: profile.totalCheckoutAttempts,
+        totalorders: profile.totalorders,
         codCount: profile.codCount,
         fulfilledCount: profile.fulfilledCount,
         unpaidCount: profile.unpaidCount

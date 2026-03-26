@@ -1,58 +1,183 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 
-export async function processFulfillmentUpdate(shop, payload) {
-  console.log(`[Fulfillment Update] Processing fulfillment for order: ${payload.order_id}`);
+const normalize = (value) =>
+  (value || "").toString().trim().toLowerCase().replace(/\s+/g, "_").replace(/-+/g, "_");
+
+const RTO_STATUSES = new Set([
+  "failure",
+  "failed",
+  "returned",
+  "return_to_origin",
+  "undelivered",
+  "attempted_delivery",
+  "delivery_failed",
+  "not_delivered",
+  "lost",
+  "canceled",
+  "cancelled",
+  "exception"
+]);
+
+export async function processFulfillmentUpdate(a, b, c) {
+  let topic;
+  let shop;
+  let payload;
+
+  // 1. Map arguments based on signature
+  if (typeof a === "string" && typeof b === "object" && c === undefined) {
+    // Old signature: (shop, payload)
+    shop = a;
+    payload = b;
+    topic = payload?.topic || payload?.webhookTopic || "UNKNOWN";
+  } else {
+    // New signature: (topic, shop, payload)
+    topic = a;
+    shop = b;
+    payload = c;
+  }
+
+  // 2. SAFEGUARD: If SQS passed the payload as a raw string, parse it into an object
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch (e) {
+      console.error(`[Webhook Processor] Failed to parse stringified payload for ${topic}`);
+      return; // Added return to drop the message if it can't be parsed
+    }
+  }
+
+  // 3. SAFEGUARD: If payload is completely missing, exit cleanly so SQS drops the message
+  // instead of crashing and retrying infinitely.
+  if (!payload) {
+    console.error(`[Webhook Processor] CRITICAL: Payload is undefined for ${topic}. Check queue.server.js (Line 127).`);
+    return;
+  }
+
+  // 4. Normalize Shopify's nested structures
+  if (payload?.data && !payload?.order_id) payload = payload.data;
+  if (payload?.payload && !payload?.order_id) payload = payload.payload;
+
+  // 5. Safely extract the Order ID
+  const orderIdRaw =
+    payload?.order_id ||
+    payload?.order?.id ||
+    payload?.order?.order_id ||
+    payload?.order?.admin_graphql_api_id ||
+    null;
+
+  if (!orderIdRaw) {
+    console.log(`[Webhook Processor] Missing order_id for ${topic}. Skipping.`);
+    return;
+  }
+
+  const orderIdStr = orderIdRaw.toString();
+  const orderIdNumeric = orderIdStr.includes("gid://") ? orderIdStr.split("/").pop() : orderIdStr;
+  const orderGid = orderIdStr.includes("gid://") ? orderIdStr : `gid://shopify/Order/${orderIdNumeric}`;
+
+  console.log(`[Webhook Processor] Processing ${topic} for order: ${orderIdNumeric}`);
 
   try {
-    const orderGid = `gid://shopify/Order/${payload.order_id}`;
-    
-    // Extract courier data from the payload
-    const trackingCompany = payload.tracking_company || null;
-    const trackingNumber = payload.tracking_number || null;
-    const trackingUrl = payload.tracking_url || null;
-    const fulfillmentStatus = payload.status || null; 
-    const shipmentStatus = payload.shipment_status || null; // e.g., "failure", "delivered"
+    const trackingInfo = Array.isArray(payload.tracking_info) ? payload.tracking_info[0] : null;
 
-    // Determine if this shipment is an RTO
-    const isRTO = (shipmentStatus === "failure" || shipmentStatus === "returned");
+    const trackingCompany =
+      payload.tracking_company ||
+      trackingInfo?.company ||
+      null;
 
-    // 1. Mark the specific order with logistics data in the raw table
-    await prisma.shopify_store_order.updateMany({
-      where: {
-        shopifyOrderId: orderGid,
-        shop: shop
-      },
-      data: {
-        carrier: trackingCompany,
-        trackingNumber: trackingNumber,
-        trackingUrl: trackingUrl,
-        fulfillmentStatus: fulfillmentStatus,
-        shipmentStatus: shipmentStatus,
-        isRTO: isRTO, // Updates the boolean flag on the order so Sync.server.js can easily count it
-      }
-    });
+    const trackingNumber =
+      payload.tracking_number ||
+      (Array.isArray(payload.tracking_numbers) ? payload.tracking_numbers[0] : null) ||
+      trackingInfo?.number ||
+      null;
 
-    console.log(`[Fulfillment Update] Local database updated successfully for order ${payload.order_id}`);
+    const trackingUrl =
+      payload.tracking_url ||
+      (Array.isArray(payload.tracking_urls) ? payload.tracking_urls[0] : null) ||
+      trackingInfo?.url ||
+      null;
 
-    // 2. Fetch the order to identify the customer
+    const fulfillmentStatus =
+      payload.status ||
+      payload.fulfillment_status ||
+      null;
+
+    const shipmentStatusRaw =
+      payload.shipment_status ||
+      payload.latest_shipment_status ||
+      payload.tracking_status ||
+      null;
+
+    const shipmentStatus = shipmentStatusRaw ? normalize(shipmentStatusRaw) : null;
+
+    const isRTO = shipmentStatus ? RTO_STATUSES.has(shipmentStatus) : false;
+
+    if (topic === "FULFILLMENTS_CREATE" || topic === "FULFILLMENTS_UPDATE") {
+      await prisma.shopify_store_order.updateMany({
+        where: {
+          shopifyOrderId: orderGid,
+          shop: shop
+        },
+        data: {
+          carrier: trackingCompany,
+          trackingNumber: trackingNumber,
+          trackingUrl: trackingUrl,
+          fulfillmentStatus: fulfillmentStatus,
+          shipmentStatus: shipmentStatusRaw,
+          isRTO: isRTO,
+        }
+      });
+    }
+
+    if (topic === "FULFILLMENT_EVENTS_CREATE") {
+      const eventStatusRaw = payload.status || payload.event_status || null;
+      const eventStatus = eventStatusRaw ? normalize(eventStatusRaw) : null;
+      const eventIsRTO = eventStatus ? RTO_STATUSES.has(eventStatus) : false;
+
+      await prisma.shopify_store_order.updateMany({
+        where: { shopifyOrderId: orderGid, shop: shop },
+        data: {
+          shipmentStatus: eventStatusRaw,
+          isRTO: eventIsRTO
+        }
+      });
+    }
+
+    if (topic === "RETURNS_UPDATE" || topic === "RETURNS_CLOSE") {
+      await prisma.shopify_store_order.updateMany({
+        where: { shopifyOrderId: orderGid, shop: shop },
+        data: {
+          shipmentStatus: "return_to_origin",
+          isRTO: true
+        }
+      });
+    }
+
+    if (topic === "REFUNDS_CREATE") {
+      await prisma.shopify_store_order.updateMany({
+        where: { shopifyOrderId: orderGid, shop: shop },
+        data: {
+          financialStatus: "PARTIALLY_REFUNDED"
+        }
+      });
+    }
+
     const orderData = await prisma.shopify_store_order.findFirst({
       where: { shopifyOrderId: orderGid, shop: shop }
     });
 
     if (orderData) {
-      console.log(`[Fulfillment Update] Recalculating profile for customer...`);
       await updateSingleBuyerProfile(
         shop,
         orderData.customerEmail,
         orderData.customerPhone,
         orderData.customerId,
-        payload.order_id.toString()
+        orderIdNumeric.toString()
       );
     }
 
   } catch (error) {
-    console.error("[Fulfillment Update Error]: Failed to process fulfillment", error.message);
-    throw error; // Crucial to throw here so SQS keeps the message in the queue for a retry if the DB locks up
+    console.error("[Webhook Processor Error]: Failed to process webhook", error.message);
+    throw error;
   }
 }

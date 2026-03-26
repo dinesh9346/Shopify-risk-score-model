@@ -38,7 +38,7 @@ async function findDuplicates() {
       // Fetch and show the specific rows
       const rows = await prisma.zippyy_buyer_profile.findMany({
         where: { shop: group.shop, customerId: group.customerId },
-        select: { buyerIdentifier: true, totalCheckoutAttempts: true }
+        select: { buyerIdentifier: true, totalorders: true }
       });
       console.log(`     Identifiers:`, rows.map(r => r.buyerIdentifier).join(" | "));
     }

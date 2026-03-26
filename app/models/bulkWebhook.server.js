@@ -105,11 +105,11 @@ async function processBulkOrders(fileUrl, shop) {
     const primaryGateway = record.paymentGatewayNames?.[0] || null;
     const isReturned = record.displayFulfillmentStatus === "RETURNED";
     
-    // NEW LOGIC: Evaluate if the historical order contains any disputes
+    // Evaluate if the historical order contains any disputes
     const orderHasDispute = record.disputes && record.disputes.length > 0;
 
     const orderData = {
-      shop: shop, // Hard-mapped to ensure Prisma never receives undefined
+      shop: shop, 
       shopifyOrderId: record.id,
       customerId: record.customer?.id || null,
       firstName: record.customer?.firstName || null,
@@ -126,7 +126,7 @@ async function processBulkOrders(fileUrl, shop) {
       cancelledAt: record.cancelledAt ? new Date(record.cancelledAt) : null,
       paymentGateway: primaryGateway,
       isRTO: isReturned,
-      hasDispute: orderHasDispute // NEW LOGIC: Map evaluated dispute status to the database
+      hasDispute: orderHasDispute 
     };
 
     batch.push(orderData);

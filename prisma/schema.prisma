@@ -27,6 +27,7 @@ model Session {
   refreshTokenExpires DateTime?
   @@schema("risk_score_model")
 }
+
 model shopify_store_order {
   id                String   @id @default(cuid())
   shop              String
@@ -37,7 +38,7 @@ model shopify_store_order {
   lastName          String?
   customerEmail     String?
   customerPhone     String?
-  lineItemsData     String?   @db.Text // @db.Text allows for longer strings if carts get very large (MySQL/PostgreSQL)
+  lineItemsData     String?   @db.Text 
 
   orderValue        Decimal  @db.Decimal(10,2)
 
@@ -64,7 +65,6 @@ model shopify_store_order {
   billingZip        String?
   billingCountry    String?
 
-
   hasDispute        Boolean  @default(false)
   isRTO             Boolean  @default(false)
 
@@ -75,40 +75,50 @@ model shopify_store_order {
 
   riskScore         zippyy_risk_score?
 
+  //  foreign key to the Buyer Profile
+  buyerProfileId    String?
+  buyerProfile      zippyy_buyer_profile? @relation(fields: [buyerProfileId], references: [id], onDelete: SetNull)
+
+  // INDEXES
   @@unique([shop, shopifyOrderId])
   @@index([shop, customerEmail])
   @@index([shop, customerId])
+  @@index([shop, customerPhone]) 
   @@index([shop, createdAt])
+  @@index([shop, buyerProfileId]) 
 
   @@schema("risk_score_model")
 }
+
 model zippyy_risk_score {
-  id          String   @id @default(cuid())
-  shop        String
+  id        String   @id @default(cuid())
+  shop      String
 
-  orderId     String   @unique
-  order       shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   String   @unique
+  order     shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  score       Int
-  riskLevel   RiskLevel
-  reasons     String
+  score     Int
+  riskLevel RiskLevel
+  reasons   String
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([shop, orderId])
 
   @@schema("risk_score_model")
 }
+
 enum RiskLevel {
   LOW
   MEDIUM
   HIGH
   @@schema("risk_score_model")
 }
+
 model zippyy_buyer_profile {
   id                    String   @id @default(uuid())
   shop                  String
-  buyerIdentifier       String   // This could be email, phone, or customerId - we will use it to link orders to profiles
+  buyerIdentifier       String   // e.g., "customer_12345" or "email_john@test.com"
   firstName             String?
   lastName              String?
   customerEmail         String? 
@@ -116,7 +126,7 @@ model zippyy_buyer_profile {
   customerPhone         String?
 
   // Aggregate Stats
-  totalCheckoutAttempts Int      @default(0)
+  totalorders Int      @default(0)
   validOrderCount       Int      @default(0)
   totalSpend            Float    @default(0)
   fulfilledCount        Int      @default(0)
@@ -134,10 +144,20 @@ model zippyy_buyer_profile {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
-  // This ensures we only ever have ONE profile per email, per shop
-  @@unique([shop, buyerIdentifier])
+  // RELATIONS
+  orders                shopify_store_order[]
+
+  // CONSTRAINTS & INDEXES
+  @@unique([shop, buyerIdentifier]) // Ensures only ONE profile per identifier, per shop
+  @@index([shop]) 
+  @@index([shop, buyerSegment]) // Makes clicking "VIP" or "High Risk" tabs load instantly
+  @@index([shop, totalorders(sort: Desc)]) // Makes pagination sorting instant
+  @@index([shop, customerEmail]) // Speeds up search logic
+  @@index([shop, customerPhone]) // Speeds up search logic
+
   @@schema("risk_score_model")
 }
+
 model merchant_feedback {
   id        String   @id @default(cuid())
   shop      String
@@ -149,3 +169,154 @@ model merchant_feedback {
   @@index([createdAt])
   @@schema("risk_score_model")
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// model shopify_store_order {
+//   id                String   @id @default(cuid())
+//   shop              String
+//   shopifyOrderId    String
+  
+//   customerId        String?
+//   firstName         String?
+//   lastName          String?
+//   customerEmail     String?
+//   customerPhone     String?
+//   lineItemsData     String?   @db.Text // @db.Text allows for longer strings if carts get very large (MySQL/PostgreSQL)
+
+//   orderValue        Decimal  @db.Decimal(10,2)
+
+//   paymentGateway    String?
+//   financialStatus   String?
+//   fulfillmentStatus String?
+
+//   carrier           String?
+//   trackingNumber    String?
+//   trackingUrl       String?
+//   shipmentStatus    String?
+
+//   ipAddress         String?
+//   shippingAddress1  String?
+//   shippingAddress2  String?
+//   shippingCity      String?
+//   shippingProvince  String?
+//   shippingZip       String?
+//   shippingCountry   String?
+//   billingAddress1   String?
+//   billingAddress2   String?
+//   billingCity       String?
+//   billingProvince   String?
+//   billingZip        String?
+//   billingCountry    String?
+
+
+//   hasDispute        Boolean  @default(false)
+//   isRTO             Boolean  @default(false)
+
+//   cancelledAt       DateTime?
+
+//   createdAt         DateTime @default(now())
+//   updatedAt         DateTime @updatedAt
+
+//   riskScore         zippyy_risk_score?
+
+//   @@unique([shop, shopifyOrderId])
+//   @@index([shop, customerEmail])
+//   @@index([shop, customerId])
+//   @@index([shop, createdAt])
+
+//   @@schema("risk_score_model")
+// }
+// model zippyy_risk_score {
+//   id          String   @id @default(cuid())
+//   shop        String
+
+//   orderId     String   @unique
+//   order       shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+//   score       Int
+//   riskLevel   RiskLevel
+//   reasons     String
+
+//   createdAt   DateTime @default(now())
+
+//   @@index([shop, orderId])
+
+//   @@schema("risk_score_model")
+// }
+// enum RiskLevel {
+//   LOW
+//   MEDIUM
+//   HIGH
+//   @@schema("risk_score_model")
+// }
+// model zippyy_buyer_profile {
+//   id                    String   @id @default(uuid())
+//   shop                  String
+//   buyerIdentifier       String   // This could be email, phone, or customerId - we will use it to link orders to profiles
+//   firstName             String?
+//   lastName              String?
+//   customerEmail         String? 
+//   customerId            String?  
+//   customerPhone         String?
+
+//   // Aggregate Stats
+//   totalorders Int      @default(0)
+//   validOrderCount       Int      @default(0)
+//   totalSpend            Float    @default(0)
+//   fulfilledCount        Int      @default(0)
+//   cancelledCount        Int      @default(0)
+//   rtoCount              Int      @default(0)
+//   codCount              Int      @default(0)
+//   unpaidCount           Int      @default(0)
+//   disputeCount          Int      @default(0)
+//   refundCount           Int      @default(0)
+
+//   // Computed Risk Data
+//   buyerSegment          String   @default("New") // VIP, Repeat Buyer, New, High Risk
+//   riskReasons           String?  
+
+//   createdAt             DateTime @default(now())
+//   updatedAt             DateTime @updatedAt
+
+//   // This ensures we only ever have ONE profile per email, per shop
+//   @@unique([shop, buyerIdentifier])
+//   @@schema("risk_score_model")
+// }
+// model merchant_feedback {
+//   id        String   @id @default(cuid())
+//   shop      String
+//   message   String   @db.Text
+//   status    String   @default("UNREAD") 
+//   createdAt DateTime @default(now())
+
+//   @@index([shop])
+//   @@index([createdAt])
+//   @@schema("risk_score_model")
+// }

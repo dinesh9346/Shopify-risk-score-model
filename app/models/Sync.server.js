@@ -90,8 +90,6 @@ export async function triggerBulkOrderSync(admin, shop) {
   }
 }
 
-
-
 /* ================= 2. BULK PROFILE BUILDER ================= */
 export async function buildHistoricalBuyerProfiles(shop) {
   console.log(`[BULK SYNC] Starting historical profile aggregation for ${shop}...`);
@@ -108,27 +106,63 @@ export async function buildHistoricalBuyerProfiles(shop) {
   allOrders.forEach(order => {
     if (order.customerId) {
       if (!identityMap.has(order.customerId)) {
-        // ADDED: Track firstName and lastName in the identity map
+        
         identityMap.set(order.customerId, { email: null, phone: null, firstName: null, lastName: null });
       }
       const idRecord = identityMap.get(order.customerId);
       if (order.customerEmail && !idRecord.email) idRecord.email = order.customerEmail.trim().toLowerCase();
       if (order.customerPhone && !idRecord.phone) idRecord.phone = order.customerPhone.trim();
       
-      // ADDED: Capture names from the raw order
       if (order.firstName && !idRecord.firstName) idRecord.firstName = order.firstName.trim();
       if (order.lastName && !idRecord.lastName) idRecord.lastName = order.lastName.trim();
     }
   });
 
   const customerMap = new Map();
+  const keyByCustomerId = new Map();
+  const keyByEmail = new Map();
+  const keyByPhone = new Map();
+
+  const normalizeEmail = (email) => (email ? email.trim().toLowerCase() : null);
+  const normalizePhone = (phone) => (phone ? phone.trim() : null);
+
+  const mergeProfiles = (targetKey, sourceKey) => {
+    if (targetKey === sourceKey) return;
+
+    const target = customerMap.get(targetKey);
+    const source = customerMap.get(sourceKey);
+    if (!target || !source) return;
+
+    // Merge counts
+    target.totalorders += source.totalorders;
+    target.validOrderCount += source.validOrderCount;
+    target.totalSpend += source.totalSpend;
+    target.fulfilledCount += source.fulfilledCount;
+    target.cancelledCount += source.cancelledCount;
+    target.rtoCount += source.rtoCount;
+    target.codCount += source.codCount;
+    target.unpaidCount += source.unpaidCount;
+    target.disputeCount += source.disputeCount;
+    target.refundCount += source.refundCount;
+
+    target.customerEmail = target.customerEmail || source.customerEmail;
+    target.customerPhone = target.customerPhone || source.customerPhone;
+    target.customerId = target.customerId || source.customerId;
+    target.firstName = target.firstName || source.firstName;
+    target.lastName = target.lastName || source.lastName;
+
+    if (source.customerId) keyByCustomerId.set(source.customerId, targetKey);
+    if (source.customerEmail) keyByEmail.set(source.customerEmail, targetKey);
+    if (source.customerPhone) keyByPhone.set(source.customerPhone, targetKey);
+
+    customerMap.delete(sourceKey);
+  };
 
   allOrders.forEach((order) => {
-    let safeEmail = order.customerEmail?.trim().toLowerCase() || null;
-    let safePhone = order.customerPhone?.trim() || null;
+    let safeEmail = normalizeEmail(order.customerEmail);
+    let safePhone = normalizePhone(order.customerPhone);
     const safeCustId = order.customerId?.trim() || null;
 
-    // ADDED: Extract safe names
     let safeFirstName = order.firstName?.trim() || null;
     let safeLastName = order.lastName?.trim() || null;
 
@@ -137,12 +171,16 @@ export async function buildHistoricalBuyerProfiles(shop) {
       safeEmail = safeEmail || enriched.email;
       safePhone = safePhone || enriched.phone;
 
-      // ADDED: Pull names from the enriched identity map if available
       safeFirstName = safeFirstName || enriched.firstName;
       safeLastName = safeLastName || enriched.lastName;
     }
 
-    const buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${order.shopifyOrderId}`;
+    const existingKeys = new Set();
+    if (safeCustId && keyByCustomerId.has(safeCustId)) existingKeys.add(keyByCustomerId.get(safeCustId));
+    if (safeEmail && keyByEmail.has(safeEmail)) existingKeys.add(keyByEmail.get(safeEmail));
+    if (safePhone && keyByPhone.has(safePhone)) existingKeys.add(keyByPhone.get(safePhone));
+
+    const buyerIdentifier = [...existingKeys][0] || safeCustId || safeEmail || safePhone || `guest-${order.shopifyOrderId}`;
 
     if (!customerMap.has(buyerIdentifier)) {
       customerMap.set(buyerIdentifier, {
@@ -151,11 +189,10 @@ export async function buildHistoricalBuyerProfiles(shop) {
         customerPhone: safePhone,
         customerId: safeCustId,
         
-        // ADDED: Save names to the profile state
         firstName: safeFirstName,
         lastName: safeLastName,
 
-        totalCheckoutAttempts: 0,
+        totalorders: 0,
         validOrderCount: 0,
         totalSpend: 0,
         fulfilledCount: 0,
@@ -167,9 +204,24 @@ export async function buildHistoricalBuyerProfiles(shop) {
         refundCount: 0,
       });
     }
+    for (const key of existingKeys) {
+      if (key !== buyerIdentifier) mergeProfiles(buyerIdentifier, key);
+    }
+
+    // Map identifiers to this profile
+    if (safeCustId) keyByCustomerId.set(safeCustId, buyerIdentifier);
+    if (safeEmail) keyByEmail.set(safeEmail, buyerIdentifier);
+    if (safePhone) keyByPhone.set(safePhone, buyerIdentifier);
 
     const profile = customerMap.get(buyerIdentifier);
-    profile.totalCheckoutAttempts += 1;
+
+    profile.customerEmail = profile.customerEmail || safeEmail;
+    profile.customerPhone = profile.customerPhone || safePhone;
+    profile.customerId = profile.customerId || safeCustId;
+    profile.firstName = profile.firstName || safeFirstName;
+    profile.lastName = profile.lastName || safeLastName;
+
+    profile.totalorders += 1;
 
     const fStatus = order.financialStatus?.toUpperCase();
     const fulfillment = order.fulfillmentStatus?.toUpperCase();
@@ -178,19 +230,21 @@ export async function buildHistoricalBuyerProfiles(shop) {
     if (isCod) profile.codCount += 1;
     if (order.hasDispute) profile.disputeCount += 1;
 
-    // --- LOGISTICS TRACKING (Correct Priority) ---
+    if (fulfillment === "FULFILLED" || fulfillment === "SUCCESS") {
+      profile.fulfilledCount += 1;
+    }
+
+    // --- LOGISTICS TRACKING  ---
     if (order.cancelledAt || fulfillment === "CANCELLED") {
       profile.cancelledCount += 1;
     } else if (order.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
       profile.rtoCount += 1;
-    } else if (fulfillment === "FULFILLED") {
-      profile.fulfilledCount += 1;
     }
 
     if (fStatus === "PENDING") profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
-    // Valid Order Gatekeeper
+    // Valid Order Gatekeeper (STRICT)
     const isClean = !order.cancelledAt && !(order.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !order.hasDispute;
     if (fStatus === "PAID" && fulfillment === "FULFILLED" && isClean) {
       profile.validOrderCount += 1;
@@ -214,6 +268,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
     }
   }
 }
+
 
 /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */
 export async function updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid) {
@@ -263,7 +318,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     }
 
     let profile = {
-      totalCheckoutAttempts: allCustomerOrders.length,
+      totalorders: allCustomerOrders.length,
       validOrderCount: 0,
       totalSpend: 0,
       fulfilledCount: 0,
@@ -341,7 +396,7 @@ export function calculateRiskSegment(profile) {
   let reasons = [];
   
   // 1. Ensure we are working with strictly numbers
-  const total = Number(profile.totalCheckoutAttempts || profile.totalorderplaced) || 0;
+  const total = Number(profile.totalorders || profile.totalorderplaced) || 0;
   const rto = Number(profile.rtoCount) || 0;
   const cancelled = Number(profile.cancelledCount) || 0;
   const disputes = Number(profile.disputeCount) || 0;
@@ -460,7 +515,7 @@ export function calculateRiskSegment(profile) {
 //         customerEmail: safeEmail,
 //         customerPhone: safePhone,
 //         customerId: safeCustId,
-//         totalCheckoutAttempts: 0,
+//         totalorders: 0,
 //         validOrderCount: 0,
 //         totalSpend: 0,
 //         fulfilledCount: 0,
@@ -474,7 +529,7 @@ export function calculateRiskSegment(profile) {
 //     }
 
 //     const profile = customerMap.get(buyerIdentifier);
-//     profile.totalCheckoutAttempts += 1;
+//     profile.totalorders += 1;
 
 //     const fStatus = order.financialStatus?.toUpperCase();
 //     const fulfillment = order.fulfillmentStatus?.toUpperCase();
@@ -553,7 +608,7 @@ export function calculateRiskSegment(profile) {
 //     });
 
 //     let profile = {
-//       totalCheckoutAttempts: allCustomerOrders.length,
+//       totalorders: allCustomerOrders.length,
 //       validOrderCount: 0,
 //       totalSpend: 0,
 //       fulfilledCount: 0,

@@ -91,12 +91,31 @@ webhooks: {
     },
     FULFILLMENTS_CREATE: {
       deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/fulfillments/create",
+      callbackUrl: "/webhooks/fulfillments",
     },
     FULFILLMENTS_UPDATE: {
       deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/fulfillments/updated",
+      callbackUrl: "/webhooks/fulfillments",
     },
+    
+ 
+  FULFILLMENT_EVENTS_CREATE: {
+    deliveryMethod: DeliveryMethod.Http,
+    callbackUrl: "/webhooks/fulfillments",
+  },
+
+  RETURNS_UPDATE: {
+    deliveryMethod: DeliveryMethod.Http,
+    callbackUrl: "/webhooks/fulfillments",
+  },
+  RETURNS_CLOSE: {
+    deliveryMethod: DeliveryMethod.Http,
+    callbackUrl: "/webhooks/fulfillments",
+  },
+  REFUNDS_CREATE: {
+    deliveryMethod: DeliveryMethod.Http,
+    callbackUrl: "/webhooks/fulfillments",
+  },
 },
   future: {
     expiringOfflineAccessTokens: true,

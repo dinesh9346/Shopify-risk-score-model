@@ -25,17 +25,17 @@ api_version = "2026-04"
 
  [[webhooks.subscriptions]]
  topics = [ "fulfillments/create"]
- uri = "/webhooks/fulfillments/create"
+ uri = "/webhooks/fulfillments"
 
  [[webhooks.subscriptions]]
  topics = [ "fulfillments/update"]
- uri = "/webhooks/fulfillment/updated"
+ uri = "/webhooks/fulfillments"
 
 
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_orders,read_payment_customizations,read_products,read_shopify_payments_disputes,write_orders,write_products,read_fulfillments"
+scopes = "read_customers,read_orders,read_payment_customizations,read_products,read_shopify_payments_disputes,write_orders,write_products,read_fulfillments,read_returns"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
