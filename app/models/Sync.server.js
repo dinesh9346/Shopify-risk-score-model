@@ -180,7 +180,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
     if (safeEmail && keyByEmail.has(safeEmail)) existingKeys.add(keyByEmail.get(safeEmail));
     if (safePhone && keyByPhone.has(safePhone)) existingKeys.add(keyByPhone.get(safePhone));
 
-    const buyerIdentifier = [...existingKeys][0] || safeCustId || safeEmail || safePhone || `guest-${order.shopifyOrderId}`;
+    const buyerIdentifier = [...existingKeys][0] || safeEmail || safePhone || safeCustId || `guest-${order.shopifyOrderId}`;
 
     if (!customerMap.has(buyerIdentifier)) {
       customerMap.set(buyerIdentifier, {
@@ -239,9 +239,10 @@ export async function buildHistoricalBuyerProfiles(shop) {
       profile.cancelledCount += 1;
     } else if (order.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
       profile.rtoCount += 1;
-    }
+     }
 
-    if (fStatus === "PENDING") profile.unpaidCount += 1;
+    // if (fStatus === "PENDING") profile.unpaidCount += 1;
+   if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
     // Valid Order Gatekeeper (STRICT)
@@ -277,26 +278,34 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     let safePhone = customerPhone?.trim() || null;
     const safeCustId = customerId?.trim() || null;
 
-    // ADDED: Setup safe variables for the name
     let safeFirstName = null;
     let safeLastName = null;
 
-    if (safeCustId && (!safeEmail || !safePhone)) {
-      const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
-        where: { shop, customerId: safeCustId }
-      });
-      if (existingProfile) {
-        safeEmail = safeEmail || existingProfile.customerEmail;
-        safePhone = safePhone || existingProfile.customerPhone;
-        
-        // ADDED: Recover existing names from the database
-        safeFirstName = existingProfile.firstName || null;
-        safeLastName = existingProfile.lastName || null;
+    // Default identifier if they are completely new
+    let buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${orderGid}`;
+
+   // 1. Attempt to find an existing profile using any available identifier
+    const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
+      where: {
+        shop,
+        OR: [
+          safeEmail ? { customerEmail: safeEmail } : undefined,
+          safeCustId ? { customerId: safeCustId } : undefined,
+          safePhone ? { customerPhone: safePhone } : undefined,
+        ].filter(Boolean) // Cleans out any undefined rules
       }
+    });
+
+    if (existingProfile) {
+      buyerIdentifier = existingProfile.buyerIdentifier; 
+     
+      safeEmail = safeEmail || existingProfile.customerEmail;
+      safePhone = safePhone || existingProfile.customerPhone;
+      safeFirstName = existingProfile.firstName || null;
+      safeLastName = existingProfile.lastName || null;
     }
 
-    const buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${orderGid}`;
-
+    // Now fetch their order history...
     const allCustomerOrders = await prisma.shopify_store_order.findMany({
       where: {
         shop,
@@ -347,7 +356,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
         profile.fulfilledCount += 1;
       }
       
-      if (fStatus === "PENDING") profile.unpaidCount += 1;
+     if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
       
       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") {
         profile.refundCount += 1;
@@ -421,28 +430,42 @@ export function calculateRiskSegment(profile) {
   if (cod >= 3 && codRate >= 0.8 && valid === 0) reasons.push("High COD Abuse Risk");
 
   // 5. THE MATHEMATICAL ENGINE
+ // 5. THE MATHEMATICAL ENGINE
   let segment = "New";
 
   if (total > 0) {
+    // If they have 5+ valid orders and a flawless fulfillment history, forgive all Unpaid/COD marks.
+    const isHighlyTrusted = (valid >= 5 && cancelled === 0 && rto === 0 && disputes === 0);
+
+    // Apply the forgiveness
+    const unforgivenUnpaid = isHighlyTrusted ? 0 : unpaid;
+    
+    // Calculate the base scores
     const successScore = valid * 1.0;
     const cancelPenalty = cancelled * 1.0;
-    const unpaidPenalty = unpaid * 0.5; 
+    const unpaidPenalty = unforgivenUnpaid * 0.5; // Will be 0 if highly trusted!
     const rtoPenalty = rto * 2.0;       
     const disputePenalty = disputes * 5.0; 
 
     const rawScore = successScore - cancelPenalty - unpaidPenalty - rtoPenalty - disputePenalty;
-    const trustIndex = rawScore / total;
+
+    // Adjust the denominator so forgiven orders don't unfairly drag down their Trust Index
+    const forgivenUnpaid = unpaid - unforgivenUnpaid;
+    const effectiveTotal = Math.max(1, total - forgivenUnpaid); 
+    
+    const trustIndex = rawScore / effectiveTotal;
 
     // Apply the Mathematical Tiers
     if (trustIndex < 0) {
       const hasSevereOffense = rto > 0 || disputes > 0; 
       
-      if (hasSevereOffense || cancelled >= 2 || unpaid >= 3) {
+      // Use unforgivenUnpaid here so trusted buyers don't accidentally fall into High Risk
+      if (hasSevereOffense || cancelled >= 2 || unforgivenUnpaid >= 3) {
         segment = "High Risk";
         if (reasons.length === 0) reasons.push(`High-Risk Individual`);
       } else {
         segment = "Watchlist";
-        if (reasons.length === 0) reasons.push("Needs Monitoring (Negative Score)");
+        if (reasons.length === 0) reasons.push("Needs Monitoring");
       }
     } 
     else if (trustIndex >= 0.75 && valid >= 2) {

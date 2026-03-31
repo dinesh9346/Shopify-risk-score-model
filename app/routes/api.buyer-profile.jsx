@@ -107,7 +107,7 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-// Helper: Discover the Buyer's True Identity using the exact same logic as Sync.server.js
+
 async function getUniversalIdentifier(shop, numericOrderId) {
   const order = await prisma.shopify_store_order.findFirst({
     where: { 
@@ -118,12 +118,10 @@ async function getUniversalIdentifier(shop, numericOrderId) {
 
   if (!order) return null;
 
-  //  FIX 1: Exact same normalization as your background sync (lowercase email!)
   let safeEmail = order.customerEmail?.trim().toLowerCase() || null;
   let safePhone = order.customerPhone?.trim() || null;
   const safeCustId = order.customerId?.trim() || null;
 
-  //  FIX 2: Identity Resolution
   if (safeCustId && (!safeEmail || !safePhone)) {
     const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
       where: { shop, customerId: safeCustId }
@@ -134,7 +132,6 @@ async function getUniversalIdentifier(shop, numericOrderId) {
     }
   }
 
-  //  FIX 3: Priority MUST be Email > Phone > ID to match the database exactly
   return safeEmail || safePhone || safeCustId || `guest-gid://shopify/Order/${numericOrderId}`;
 }
 
@@ -158,7 +155,7 @@ export const loader = async ({ request }) => {
        return cors(Response.json({ profile: null }));
     }
 
-    //  INSTANT FETCH: Grab the correct, up-to-date stats
+   
     const profile = await prisma.zippyy_buyer_profile.findUnique({
       where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
     });

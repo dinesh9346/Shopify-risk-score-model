@@ -38,6 +38,11 @@ export async function enqueueWebhook(topic, shop, payload) {
  // 2. THE CONSUMER: Background loop polling SQS and saving to the database
 
 export async function startQueueListener() {
+  if (process.env.NODE_ENV !== "production" && global.__inboundWorkerStarted) {
+    console.log(" [SQS CONSUMER] Worker already running. Skipping duplicate start.");
+    return; 
+  }
+  global.__inboundWorkerStarted = true;
   console.log(" [SQS CONSUMER] Background worker started. Listening for messages...");
 
   while (true) {
@@ -165,8 +170,11 @@ export async function enqueueOutboundRisk(shop, orderId, riskScore, riskLevel, r
 }
 // 4. THE OUTBOUND CONSUMER: Listens to the outbound queue and pushes risk scores to Shopify in the background
 export async function startOutboundQueueListener() {
-  console.log(" [OUTBOUND CONSUMER]  checking AWS...");
-
+ if (process.env.NODE_ENV !== "production" && global.__outboundWorkerStarted) {
+    console.log(" [OUTBOUND CONSUMER] Worker already running. Skipping duplicate start.");
+    return; 
+  }
+  global.__outboundWorkerStarted = true;
   while (true) {
     try {
       const receiveParams = {

@@ -20,52 +20,88 @@ import { useLoaderData, useSubmit, useActionData, useNavigation, useNavigate } f
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+// Helper function for retrying database queries
+const retryQuery = async (queryFn, retries = 3, delay = 1000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await queryFn();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      console.warn(`Query failed, retrying (${i + 1}/${retries}):`, error.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+};
+
 // 1. SERVER-SIDE LOADER: Fetches data when the page loads
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const totalOrders = await prisma.shopify_store_order.count({ where: { shop } });
-  const highRiskCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "High Risk" } });
-  const vipCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "VIP" } });
-  const repeatCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "Repeat Buyer" } });
-  const newCount = await prisma.zippyy_buyer_profile.count({ where: { shop, buyerSegment: "New" } });
-  
-  // Add this calculation right above your return statement
-  const riskRate = totalOrders > 0 
-  ? ((highRiskCount / totalOrders) * 100).toFixed(1) 
-  : 0;
-  const riskRateTone = riskRate > 10 ? "critical" : "subdued";
+  try {
+    // Batch queries to reduce connection usage
+    const [totalOrdersResult, segmentCountsResult, recentUpdatesResult] = await Promise.all([
+      retryQuery(() => prisma.shopify_store_order.count({ where: { shop } })),
+      retryQuery(() => prisma.zippyy_buyer_profile.groupBy({
+        by: ['buyerSegment'],
+        where: { shop },
+        _count: { buyerSegment: true },
+      })),
+      retryQuery(() => prisma.zippyy_buyer_profile.findMany({
+        where: { shop },
+        orderBy: { updatedAt: "desc" },
+        take: 5
+      }))
+    ]);
 
-  const recentUpdates = await prisma.zippyy_buyer_profile.findMany({
-    where: { shop },
-    orderBy: { updatedAt: "desc" },
-    take: 5
-  });
+    const totalOrders = totalOrdersResult;
+    const segmentCounts = segmentCountsResult;
 
-  const liveActivity = recentUpdates.map(profile => {
-    const rawId = profile.customerEmail || profile.customerPhone || "Guest Buyer";
-    const maskedId = rawId.includes("@") 
-      ? rawId.replace(/(.{1})(.*)(?=@)/, "$1***") 
-      : rawId.substring(0, 3) + "***";
+    // Extract counts from groupBy result
+    const highRiskCount = segmentCounts.find(s => s.buyerSegment === "High Risk")?._count.buyerSegment || 0;
+    const vipCount = segmentCounts.find(s => s.buyerSegment === "VIP")?._count.buyerSegment || 0;
+    const repeatCount = segmentCounts.find(s => s.buyerSegment === "Repeat Buyer")?._count.buyerSegment || 0;
+    const newCount = segmentCounts.find(s => s.buyerSegment === "New")?._count.buyerSegment || 0;
 
-    let actionData = {};
+    // Add this calculation right above your return statement
+    const riskRate = totalOrders > 0 
+      ? ((highRiskCount / totalOrders) * 100).toFixed(1) 
+      : 0;
+    const riskRateTone = riskRate > 10 ? "critical" : "subdued";
 
-    if (profile.buyerSegment === "High Risk") {
-      actionData = { action: "Flagged", tone: "critical", text: `High risk signals detected for ${maskedId}. Reason: ${profile.riskReasons || "Multiple factors"}.` };
-    } else if (profile.buyerSegment === "VIP") {
-      actionData = { action: "Upgraded", tone: "success", text: `${maskedId} reached VIP status.` };
-    } else if (profile.buyerSegment === "Repeat Buyer") {
-      actionData = { action: "Recognized", tone: "success", text: `Trusted repeat buyer ${maskedId} identified.` };
-    } else {
-      actionData = { action: "Analyzed", tone: "info", text: `New buyer profile generated for ${maskedId}.` };
-    }
-    return actionData;
-  });
+    const recentUpdates = recentUpdatesResult;
 
-  return Response.json({ 
-    totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
-  });
+    const liveActivity = recentUpdates.map(profile => {
+      const rawId = profile.customerEmail || profile.customerPhone || "Guest Buyer";
+      const maskedId = rawId.includes("@") 
+        ? rawId.replace(/(.{1})(.*)(?=@)/, "$1***") 
+        : rawId.substring(0, 3) + "***";
+
+      let actionData = {};
+
+      if (profile.buyerSegment === "High Risk") {
+        actionData = { action: "Flagged", tone: "critical", text: `High risk signals detected for ${maskedId}. Reason: ${profile.riskReasons || "Multiple factors"}.` };
+      } else if (profile.buyerSegment === "VIP") {
+        actionData = { action: "Upgraded", tone: "success", text: `${maskedId} reached VIP status.` };
+      } else if (profile.buyerSegment === "Repeat Buyer") {
+        actionData = { action: "Recognized", tone: "success", text: `Trusted repeat buyer ${maskedId} identified.` };
+      } else {
+        actionData = { action: "Analyzed", tone: "info", text: `New buyer profile generated for ${maskedId}.` };
+      }
+      return actionData;
+    });
+
+    return Response.json({ 
+      totalOrders, highRiskCount, vipCount, repeatCount, newCount, liveActivity, shop 
+    });
+  } catch (error) {
+    console.error("[LOADER ERROR] Failed to load dashboard data:", error);
+    // Return error response or fallback data
+    return Response.json({ 
+      error: "Failed to load dashboard data. Please try again.",
+      totalOrders: 0, highRiskCount: 0, vipCount: 0, repeatCount: 0, newCount: 0, liveActivity: [], shop 
+    }, { status: 500 });
+  }
 };
 
 // 2. SERVER-SIDE ACTION: Handles form submissions safely and saves to DB

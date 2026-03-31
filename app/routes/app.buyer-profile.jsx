@@ -240,7 +240,25 @@ export default function Index() {
   useEffect(() => {
     setIsMounted(true);
   }, []);
+  // Sync search input with URL param changes
+  useEffect(() => {
+    if (!isMounted) return;
+    
+    const delayDebounceFn = setTimeout(() => {
+      setSearchParams(prev => {
+        const currentQ = prev.get("q") || "";
+        // Only update if the value actually changed
+        if (searchInput && searchInput !== currentQ) {
+          prev.set("q", searchInput);
+        } else if (!searchInput && currentQ) {
+          prev.delete("q");
+        }
+        return prev;
+      }, { preventScrollReset: true }); 
+    }, 400); // 400ms delay prevents spamming the server while typing
 
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchInput, setSearchParams, isMounted]);
   // --- Handlers ---
   const handleRowClick = (profile) => {
     setSelectedProfileId(profile.id);
@@ -262,18 +280,20 @@ export default function Index() {
     });
   }, [setSearchParams]);
 
-  const handleSearchChange = useCallback((value) => {
+ const handleSearchChange = useCallback((value) => {
     setSearchInput(value);
+    
   }, []);
 
-  const executeSearch = useCallback(() => {
-    setSearchParams(prev => {
-      if (searchInput) prev.set("q", searchInput);
-      else prev.delete("q");
-      return prev;
+  const handleClearSearch = useCallback(() => {
+    setSearchInput("");
+    setSearchParams(prev => { 
+      prev.delete("q"); 
+      return prev; 
     });
-  }, [searchInput, setSearchParams]);
+  }, [setSearchParams]);
 
+  
   // CSV Export Logic
   const exportToCSV = () => {
     if (!profiles || profiles.length === 0) return;
@@ -509,17 +529,11 @@ export default function Index() {
           <IndexTable.Cell>
             <Text as="span" alignment="end">{formatCurrency(profile.totalSpend)}</Text>
           </IndexTable.Cell>
-
           <IndexTable.Cell>
-            {/* RESTORED: Your original clean UI for Risk Factors */}
             {profile.riskReasons?.length > 0 ? (
-              <InlineStack gap="100" wrap>
-                {profile.riskReasons.map((reason, i) => (
-                  <Badge tone="critical" key={i}>{reason}</Badge>
-                ))}
-              </InlineStack>
+              <Text tone="critical">Flagged as {profile.buyerSegment} Customer</Text>
             ) : (
-              <Text tone="subdued">Clean History</Text>
+              <Text tone="subdued">Standard Customer Profile</Text>
             )}
           </IndexTable.Cell>
         </IndexTable.Row>
@@ -664,7 +678,7 @@ export default function Index() {
               </Card>
             </InlineGrid>
           </Layout.Section>
-
+{/* 
           {(selectedProfile.buyerSegment === "High Risk" || selectedProfile.buyerSegment === "Watchlist") && selectedProfile.riskReasons.length > 0 && (
             <Layout.Section>
               <Banner 
@@ -679,6 +693,18 @@ export default function Index() {
                     ))}
                   </ul>
                 </BlockStack>
+              </Banner>
+            </Layout.Section>
+          // )} */}
+          {(selectedProfile.buyerSegment === "High Risk" || selectedProfile.buyerSegment === "Watchlist") && (
+            <Layout.Section>
+              <Banner 
+                tone={selectedProfile.buyerSegment === "High Risk" ? "critical" : "warning"} 
+                title={`${selectedProfile.buyerSegment} Customer`}
+              >
+                <Text as="p">
+                  This buyer has been classified as a {selectedProfile.buyerSegment} customer based on their historical order patterns.
+                </Text>
               </Banner>
             </Layout.Section>
           )}
@@ -811,28 +837,21 @@ export default function Index() {
         <Box padding="400">
           <BlockStack gap="400">
             <Text variant="headingMd" as="h1" fontWeight="bold">Actionable Intelligence Log</Text>
-            
-            {/* FIXED SEARCH BAR: Wrapped in a form to natively handle Enter key submissions */}
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              executeSearch();
-            }}>
+            {/* LIVE SEARCH BAR */}
+            <form onSubmit={(e) => e.preventDefault()}>
               <InlineStack gap="300" align="start">
                 <div style={{ flexGrow: 1 }}>
                   <TextField
-                    placeholder="Search by customer name, email, or phone... (Press Enter to search)"
+                    placeholder="Start typing to search customers..."
                     value={searchInput}
                     onChange={handleSearchChange}
                     clearButton
-                    onClearButtonClick={() => {
-                      setSearchInput('');
-                      setSearchParams(prev => { prev.delete("q"); return prev; });
-                    }}
+                    onClearButtonClick={handleClearSearch}
                     autoComplete="off"
                     prefix={<Icon source={SearchIcon} tone="base" />}
                   />
                 </div>
-                <Button submit loading={isRefreshing}>Search</Button>
+                {/* The Search button is removed because the table now acts as live suggestions! */}
               </InlineStack>
             </form>
           </BlockStack>
