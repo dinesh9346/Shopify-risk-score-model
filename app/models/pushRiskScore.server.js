@@ -6,7 +6,7 @@ export async function pushRiskToShopify(shop, orderId, riskLevel, riskFacts) {
   // 1. Generate the background offline admin client
   const { admin } = await shopify.unauthenticated.admin(shop);
 
-  // 2. The Native Fraud Assessment Mutation (EXACTLY from your working reference)
+  // 2. The Native Fraud Assessment Mutation 
   const riskAssessmentMutation = `
     mutation CreateRiskAssessment($input: OrderRiskAssessmentCreateInput!) {
       orderRiskAssessmentCreate(orderRiskAssessmentInput: $input) {

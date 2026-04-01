@@ -19,7 +19,7 @@ function Extension() {
   useEffect(() => {
     let isMounted = true;
     let timeoutId;
-    const maxAttempts = 5; 
+    const maxAttempts = 8; 
     let attempt = 0;
 
     async function fetchRiskProfile() {
@@ -40,7 +40,7 @@ function Extension() {
         if (response.ok) {
            const result = await response.json();
            
-           // 2. SUCCESS: The SQS worker finished and data is here!
+           // 2. SUCCESS: The SQS worker finished and data
            if (result.profile && isMounted) {
              setRiskData(result.profile);
              setLoading(false);
@@ -54,14 +54,11 @@ function Extension() {
           const delay = Math.pow(2, attempt - 1) * 1000; 
           timeoutId = setTimeout(fetchRiskProfile, delay);
         } else if (isMounted) {
-          // 4. TIMEOUT: SQS is heavily backed up, or it is genuinely a new customer.
-          // Stop loading so the UI can gracefully fall back to default data.
           setLoading(false);
         }
 
       } catch (error) {
         console.error("Error fetching risk data:", error);
-        // Even on a network error, try a few more times before giving up
         if (attempt < maxAttempts && isMounted) {
            const delay = Math.pow(2, attempt - 1) * 1000;
            timeoutId = setTimeout(fetchRiskProfile, delay);
@@ -81,7 +78,7 @@ function Extension() {
     };
   }, [orderId]);
 
-  // --- UI RENDER LOGIC ---
+  // UI RENDER LOGIC 
 
   if (loading) {
     return (
@@ -91,7 +88,7 @@ function Extension() {
     );
   }
 
-  // 5. THE FAIL-SAFE FALLBACK: If polling failed or found nothing, inject clean default data
+  // 5. THE FAIL-SAFE FALLBACK: If polling failed or found nothing
   const profileData = riskData || {
     buyerSegment: "New",
     riskReason: "Standard fulfillment processing.",
@@ -106,21 +103,7 @@ function Extension() {
     unpaidCount: 0
   };
 
-  // /** @type {"info" | "critical" | "success" | "auto" | "warning"} */
-  // let bannerTone = "info"; 
-  // let bannerTitle = profileData.buyerSegment;
-  // let bannerMessage = profileData.riskReason;
 
-  // if (bannerTitle === "High Risk" || bannerTitle === "COD Abuser") {
-  //   bannerTone = "critical"; 
-  //   if (!bannerMessage) bannerMessage = "Warning: High RTO/Returns. Verify before shipping COD.";
-  // } else if (bannerTitle === "VIP" || bannerTitle === "Repeat Buyer") {
-  //   bannerTone = "success"; 
-  //   if (!bannerMessage) bannerMessage = "Excellent order history. Prioritize fulfillment.";
-  // } else if (bannerTitle === "New") {
-  //   bannerTone = "auto"; 
-  //   if (!bannerMessage) bannerMessage = "This is a new customer. Standard fulfillment processing.";
-  // }
 /** @type {"info" | "critical" | "success" | "auto" | "warning"} */
   let bannerTone = "info"; 
   let bannerTitle = profileData.buyerSegment || "New";

@@ -241,7 +241,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
       profile.rtoCount += 1;
      }
 
-    // if (fStatus === "PENDING") profile.unpaidCount += 1;
+  
    if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
@@ -428,8 +428,7 @@ export function calculateRiskSegment(profile) {
   if (cancelled >= 3 && cancelRate >= 0.4) reasons.push("High Cancellation Rate");
   if (total >= 5 && valid === 0) reasons.push("Spam/Bot Behavior");
   if (cod >= 3 && codRate >= 0.8 && valid === 0) reasons.push("High COD Abuse Risk");
-
-  // 5. THE MATHEMATICAL ENGINE
+E
  // 5. THE MATHEMATICAL ENGINE
   let segment = "New";
 
@@ -443,7 +442,7 @@ export function calculateRiskSegment(profile) {
     // Calculate the base scores
     const successScore = valid * 1.0;
     const cancelPenalty = cancelled * 1.0;
-    const unpaidPenalty = unforgivenUnpaid * 0.5; // Will be 0 if highly trusted!
+    const unpaidPenalty = unforgivenUnpaid * 0.5; 
     const rtoPenalty = rto * 2.0;       
     const disputePenalty = disputes * 5.0; 
 
@@ -456,7 +455,10 @@ export function calculateRiskSegment(profile) {
     const trustIndex = rawScore / effectiveTotal;
 
     // Apply the Mathematical Tiers
-    if (trustIndex < 0) {
+    if (total > 10 && valid === 0) {
+      segment = "High Risk";
+    }
+    else if (trustIndex < 0) {
       const hasSevereOffense = rto > 0 || disputes > 0; 
       
       // Use unforgivenUnpaid here so trusted buyers don't accidentally fall into High Risk
@@ -468,13 +470,13 @@ export function calculateRiskSegment(profile) {
         if (reasons.length === 0) reasons.push("Needs Monitoring");
       }
     } 
-    else if (trustIndex >= 0.75 && valid >= 2) {
+    else if (trustIndex >= 0.75 && valid >= 5) {
       segment = "VIP";
     } 
-    else if (trustIndex >= 0.30 && valid >= 1) {
+    else if (trustIndex >= 0.30 && valid >= 3) {
       segment = "Repeat Buyer";
     } 
-    else if (trustIndex >= 0.0 && trustIndex < 0.30 && total > 1) {
+    else if (trustIndex >= 0.0 && trustIndex < 0.30 && total == 1 || valid == 2) {
       segment = "Watchlist";
     }
   }

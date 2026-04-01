@@ -5,28 +5,53 @@ export async function processOrderUpdate(shop, payload) {
   console.log(`[Order Update] Processing update for order: ${payload.id}`);
 
   try {
-    // 1. Update the raw order data
-    await prisma.shopify_store_order.updateMany({
+    
+    const isRtoStatus = ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
+               payload.financial_status?.toLowerCase() === "refunded";
+    await prisma.shopify_store_order.upsert({
       where: {
-        shopifyOrderId: payload.admin_graphql_api_id,
-        shop: shop
+        
+        shop_shopifyOrderId: {
+          shop: shop,
+          shopifyOrderId: payload.admin_graphql_api_id
+        }
       },
-      data: {
+      update: {
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
-        isRTO: ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
-           payload.financial_status?.toLowerCase() === "refunded",
-        shippingAddress1: payload.shipping_address?.address1?.trim() || undefined,
-        shippingAddress2: payload.shipping_address?.address2?.trim() || undefined,
-        shippingCity: payload.shipping_address?.city?.trim() || undefined,
-        shippingProvince: payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || undefined,
-        shippingZip: payload.shipping_address?.zip?.trim() || undefined,
-        shippingCountry: payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || undefined,
+        isRTO: isRtoStatus,
+        shippingAddress1: payload.shipping_address?.address1?.trim() || null,
+        shippingAddress2: payload.shipping_address?.address2?.trim() || null,
+        shippingCity: payload.shipping_address?.city?.trim() || null,
+        shippingProvince: payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || null,
+        shippingZip: payload.shipping_address?.zip?.trim() || null,
+        shippingCountry: payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || null,
+      },
+      create: {
+        shop: shop,
+        shopifyOrderId: payload.admin_graphql_api_id,
+        // orderValue is REQUIRED in your schema, so we extract total_price from the webhook
+        orderValue: payload.total_price ? parseFloat(payload.total_price) : 0, 
+        customerEmail: payload.email || payload.customer?.email || null,
+        customerPhone: payload.shipping_address?.phone || payload.customer?.phone || null,
+        customerId: payload.customer?.id ? `gid://shopify/Customer/${payload.customer.id}` : null,
+        firstName: payload.customer?.first_name || null,
+        lastName: payload.customer?.last_name || null,
+        financialStatus: payload.financial_status,
+        fulfillmentStatus: payload.fulfillment_status,
+        cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
+        isRTO: isRtoStatus,
+        shippingAddress1: payload.shipping_address?.address1?.trim() || null,
+        shippingAddress2: payload.shipping_address?.address2?.trim() || null,
+        shippingCity: payload.shipping_address?.city?.trim() || null,
+        shippingProvince: payload.shipping_address?.province?.trim() || payload.shipping_address?.province_code?.trim() || null,
+        shippingZip: payload.shipping_address?.zip?.trim() || null,
+        shippingCountry: payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || null,
       }
     });
 
-    console.log(` [Order Update] Local database updated successfully for order ${payload.id}`);
+    console.log(` [Order Update] Local database successfully upserted for order ${payload.id}`);
 
     //  2. Extract customer identity from the webhook payload
     const customerEmail = payload.email || payload.customer?.email || null;
@@ -49,29 +74,3 @@ export async function processOrderUpdate(shop, payload) {
     throw error;
   }
 }
-
-// import prisma from "../db.server.js";
-
-// export async function processOrderUpdate(shop, payload) {
-//   console.log(`[Order Update] Processing update for order: ${payload.id}`);
-
-//   try {
-//     await prisma.shopify_store_order.updateMany({
-//       where: { 
-//         shopifyOrderId: payload.admin_graphql_api_id,
-//         shop: shop
-//       },
-//       data: {
-//         financialStatus: payload.financial_status,
-//         fulfillmentStatus: payload.fulfillment_status,
-//         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
-//       },
-//     });
-    
-//     console.log(` [Order Update] Local database updated successfully for order ${payload.id}`);
-//   } catch (error) {
-//     console.error(` [Order Update Error] Failed to update local DB:`, error.message);
-//     // Throwing the error tells SQS to keep the message in the queue and try again later
-//     throw error; 
-//   }
-// }

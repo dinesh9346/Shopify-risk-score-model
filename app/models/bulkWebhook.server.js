@@ -4,7 +4,6 @@ import readline from "readline";
 import { Readable } from "stream";
 import { buildHistoricalBuyerProfiles } from "./Sync.server.js"; 
 
-// 1. FIXED SIGNATURE: Match the queue router (shop, payload)
 export async function handleBulkFinishWebhook(shop, payload) {
 
   if (!payload || !payload.admin_graphql_api_id) {
@@ -70,7 +69,6 @@ export async function handleBulkFinishWebhook(shop, payload) {
   console.log(`[BULK SYNC] Raw data saved. Firing Profile Aggregation...`);
   await buildHistoricalBuyerProfiles(shop);
   
-  // No need to return a Response here because the queue worker handles the success!
 }
 
 async function processBulkOrders(fileUrl, shop) {
