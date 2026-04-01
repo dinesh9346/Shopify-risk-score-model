@@ -1,3 +1,4 @@
+
 import { useLoaderData, useNavigation, useSubmit, useSearchParams } from "react-router";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -238,6 +239,7 @@ export default function Index() {
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
   // Sync search input with URL param changes
   useEffect(() => {
     if (!isMounted) return;
@@ -257,6 +259,7 @@ export default function Index() {
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchInput, setSearchParams, isMounted]);
+
   // --- Handlers ---
   const handleRowClick = (profile) => {
     setSelectedProfileId(profile.id);
@@ -278,9 +281,8 @@ export default function Index() {
     });
   }, [setSearchParams]);
 
- const handleSearchChange = useCallback((value) => {
+  const handleSearchChange = useCallback((value) => {
     setSearchInput(value);
-    
   }, []);
 
   const handleClearSearch = useCallback(() => {
@@ -409,17 +411,24 @@ export default function Index() {
   ]);
 
   const SHIPMENT_IN_TRANSIT = new Set([
-    "in_transit", "out_for_delivery", "picked_up", "shipped",
-    "label_created", "manifested", "ready_for_pickup",
+    "in_transit", "out_for_delivery", "shipped",
     "arrived_at_facility", "departed_facility",
-    "in_transit_to_destination", "available_for_pickup"
+    "in_transit_to_destination"
+  ]);
+
+  // NEW: Pre-Transit Statuses 
+  const SHIPMENT_PRE_TRANSIT = new Set([
+    "label_created", "label_purchased", "label_printed",
+    "ready_for_pickup", "manifested", "picked_up"
   ]);
 
   const SHIPMENT_PENDING = new Set([
-    "label_purchased", "label_printed", "confirmed",
-    "booked", "processing", "pending"
+    "confirmed", "booked", "processing", "pending"
   ]);
 
+  // ============================================
+  // THE NEW BUCKET LOGIC 
+  // ============================================
   const getOrderBucket = (order) => {
     const ship = normalizeStatus(order?.shipmentStatus);
     const fulfill = normalizeStatus(order?.fulfillmentStatus);
@@ -451,9 +460,13 @@ export default function Index() {
 
     if (ship === "delivered") return "delivered";
     if (SHIPMENT_IN_TRANSIT.has(ship)) return "in_transit";
+    if (SHIPMENT_PRE_TRANSIT.has(ship)) return "pre_transit";
     if (SHIPMENT_PENDING.has(ship)) return "pending";
 
-    if (hasTracking && (fulfill === "fulfilled" || fulfill === "success")) return "in_transit";
+    // REACT MAGIC: If it has tracking, but carrier hasn't scanned it yet, it is Pre-Transit
+    if (hasTracking) return "pre_transit";
+
+    // If fulfilled (e.g., local delivery) but no tracking number exists
     if (fulfill === "fulfilled" || fulfill === "success") return "pending";
     
     return "unfulfilled";
@@ -463,6 +476,7 @@ export default function Index() {
     const bucket = getOrderBucket(order);
     if (bucket === "unfulfilled") return <Badge tone="attention">Unfulfilled</Badge>;
     if (bucket === "pending") return <Badge>Pending Dispatch</Badge>;
+    if (bucket === "pre_transit") return <Badge tone="info">Pre-Transit</Badge>; // <-- NEW BADGE
     if (bucket === "in_transit") return <Badge tone="info">In Transit</Badge>;
     if (bucket === "delivered") return <Badge tone="success">Delivered</Badge>;
     if (bucket === "rto") return <Badge tone="critical">RTO / Failed Delivery</Badge>;
@@ -481,9 +495,11 @@ export default function Index() {
   
   const selectedTab = Math.max(0, tabs.findIndex(t => t.id === currentTabId));
 
+  // NEW: Added the Pre-Transit tab here
   const orderHistoryTabs = [
     { id: "unfulfilled", content: "Unfulfilled" },
     { id: "pending-dispatch", content: "Pending Dispatch" },
+    { id: "pre-transit", content: "Pre-Transit" }, // <-- NEW TAB
     { id: "in-transit", content: "In Transit" },
     { id: "delivered", content: "Delivered" },
     { id: "rto", content: "RTO / Failed" },
@@ -561,14 +577,16 @@ export default function Index() {
   if (selectedProfile) {
     const detailOrderHistory = selectedProfile.orderHistory || [];
 
+    // Filter updated to match the new tab indices!
     const filteredOrderHistory = detailOrderHistory.filter((order) => {
       const bucket = getOrderBucket(order);
       if (orderHistoryTab === 0) return bucket === "unfulfilled";
-      if (orderHistoryTab === 1) return bucket === "pending-dispatch";
-      if (orderHistoryTab === 2) return bucket === "in-transit";
-      if (orderHistoryTab === 3) return bucket === "delivered";
-      if (orderHistoryTab === 4) return bucket === "rto";
-      if (orderHistoryTab === 5) return bucket === "cancelled";
+      if (orderHistoryTab === 1) return bucket === "pending";
+      if (orderHistoryTab === 2) return bucket === "pre_transit"; // <-- Handled Index 2
+      if (orderHistoryTab === 3) return bucket === "in_transit";
+      if (orderHistoryTab === 4) return bucket === "delivered";
+      if (orderHistoryTab === 5) return bucket === "rto";
+      if (orderHistoryTab === 6) return bucket === "cancelled";
       return true;
     });
 
@@ -902,8 +920,3 @@ export default function Index() {
 }
 
 export { boundary };
-
-
-
-
-

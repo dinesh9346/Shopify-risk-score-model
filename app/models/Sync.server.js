@@ -1,5 +1,5 @@
-import prisma from "../db.server.js";
 
+import prisma from "../db.server.js";
 export async function triggerBulkOrderSync(admin, shop) {
   console.log(`[BULK SYNC] Starting bulk order sync for ${shop}`);
 
@@ -9,16 +9,19 @@ export async function triggerBulkOrderSync(admin, shop) {
         bulkOperationRunQuery(
           query: """
           {
-            orders(first: 250) {
+            orders {
               edges {
                 node {
                   id
+                  createdAt
                   email
                   clientIp
                   cancelledAt
                   displayFinancialStatus
                   displayFulfillmentStatus
                   paymentGatewayNames
+                  tags
+                  
                   totalPriceSet {
                     shopMoney {
                       amount
@@ -28,6 +31,7 @@ export async function triggerBulkOrderSync(admin, shop) {
                     id
                     status
                   }
+                  
                   customer {
                     id
                     firstName
@@ -37,12 +41,47 @@ export async function triggerBulkOrderSync(admin, shop) {
 
                   shippingAddress {
                     address1
-                    phone
+                    address2
+                    city
+                    province
+                    zip
                     countryCode
+                    phone
                   }
 
                   billingAddress {
+                    address1
+                    address2
+                    city
+                    province
+                    zip
                     countryCode
+                  }
+                  
+                  lineItems {
+                    edges {
+                      node {
+                        id
+                        title
+                        sku
+                        quantity
+                        originalTotalSet {
+                          shopMoney {
+                            amount
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  fulfillments {
+                    id
+                    displayStatus
+                    trackingInfo {
+                      company
+                      number
+                      url
+                    }
                   }
 
                 }
@@ -64,7 +103,6 @@ export async function triggerBulkOrderSync(admin, shop) {
     `);
 
     const json = await response.json();
-
     console.log("[BULK SYNC RESPONSE]", JSON.stringify(json, null, 2));
 
     if (!json.data?.bulkOperationRunQuery) {
@@ -89,7 +127,6 @@ export async function triggerBulkOrderSync(admin, shop) {
     console.error(`[BULK SYNC] Failed to start bulk sync`, error);
   }
 }
-
 /* ================= 2. BULK PROFILE BUILDER ================= */
 export async function buildHistoricalBuyerProfiles(shop) {
   console.log(`[BULK SYNC] Starting historical profile aggregation for ${shop}...`);
@@ -106,7 +143,6 @@ export async function buildHistoricalBuyerProfiles(shop) {
   allOrders.forEach(order => {
     if (order.customerId) {
       if (!identityMap.has(order.customerId)) {
-        
         identityMap.set(order.customerId, { email: null, phone: null, firstName: null, lastName: null });
       }
       const idRecord = identityMap.get(order.customerId);
@@ -151,6 +187,9 @@ export async function buildHistoricalBuyerProfiles(shop) {
     target.firstName = target.firstName || source.firstName;
     target.lastName = target.lastName || source.lastName;
 
+    // Combine tracked order IDs
+    target.orderIds = [...(target.orderIds || []), ...(source.orderIds || [])];
+
     if (source.customerId) keyByCustomerId.set(source.customerId, targetKey);
     if (source.customerEmail) keyByEmail.set(source.customerEmail, targetKey);
     if (source.customerPhone) keyByPhone.set(source.customerPhone, targetKey);
@@ -188,10 +227,8 @@ export async function buildHistoricalBuyerProfiles(shop) {
         customerEmail: safeEmail,
         customerPhone: safePhone,
         customerId: safeCustId,
-        
         firstName: safeFirstName,
         lastName: safeLastName,
-
         totalorders: 0,
         validOrderCount: 0,
         totalSpend: 0,
@@ -202,13 +239,13 @@ export async function buildHistoricalBuyerProfiles(shop) {
         unpaidCount: 0,
         disputeCount: 0,
         refundCount: 0,
+        orderIds: [] // Track which orders belong to this profile
       });
     }
     for (const key of existingKeys) {
       if (key !== buyerIdentifier) mergeProfiles(buyerIdentifier, key);
     }
 
-    // Map identifiers to this profile
     if (safeCustId) keyByCustomerId.set(safeCustId, buyerIdentifier);
     if (safeEmail) keyByEmail.set(safeEmail, buyerIdentifier);
     if (safePhone) keyByPhone.set(safePhone, buyerIdentifier);
@@ -222,6 +259,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
     profile.lastName = profile.lastName || safeLastName;
 
     profile.totalorders += 1;
+    profile.orderIds.push(order.id); // Save the order relation
 
     const fStatus = order.financialStatus?.toUpperCase();
     const fulfillment = order.fulfillmentStatus?.toUpperCase();
@@ -234,18 +272,15 @@ export async function buildHistoricalBuyerProfiles(shop) {
       profile.fulfilledCount += 1;
     }
 
-    // --- LOGISTICS TRACKING  ---
     if (order.cancelledAt || fulfillment === "CANCELLED") {
       profile.cancelledCount += 1;
     } else if (order.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
       profile.rtoCount += 1;
-     }
+    }
 
-  
-   if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
+    if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
-    // Valid Order Gatekeeper (STRICT)
     const isClean = !order.cancelledAt && !(order.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !order.hasDispute;
     if (fStatus === "PAID" && fulfillment === "FULFILLED" && isClean) {
       profile.validOrderCount += 1;
@@ -253,21 +288,56 @@ export async function buildHistoricalBuyerProfiles(shop) {
     }
   });
 
-  for (const [identifier, profile] of customerMap.entries()) {
-    
-    // CALL THE HELPER FUNCTION HERE
-    const { segment, riskReasons } = calculateRiskSegment(profile);
+  // --- BATCH WRITING FIX ---
+  let batchPromises = [];
+  let totalSaved = 0;
 
-    try {
-      await prisma.zippyy_buyer_profile.upsert({
+  for (const [identifier, profile] of customerMap.entries()) {
+    const { segment, riskReasons } = calculateRiskSegment(profile);
+    
+    // Extract order IDs to use in the Prisma connect query
+    const linkedOrders = profile.orderIds.map(id => ({ id }));
+    
+    // Remove the temporary orderIds array so it doesn't break the Prisma payload
+    delete profile.orderIds;
+    delete profile.buyerIdentifier; // Extracted to the 'where' clause
+
+    batchPromises.push(
+      prisma.zippyy_buyer_profile.upsert({
         where: { shop_buyerIdentifier: { shop, buyerIdentifier: identifier } },
-        update: { ...profile, buyerSegment: segment, riskReasons: riskReasons },
-        create: { shop, ...profile, buyerSegment: segment, riskReasons: riskReasons }
-      });
-    } catch (err) {
-      console.error(`[BULK ERROR]`, err.message);
+        update: { 
+          ...profile, 
+          buyerSegment: segment, 
+          riskReasons: riskReasons,
+          orders: { connect: linkedOrders } // Automatically links orders!
+        },
+        create: { 
+          shop, 
+          buyerIdentifier: identifier, 
+          ...profile, 
+          buyerSegment: segment, 
+          riskReasons: riskReasons,
+          orders: { connect: linkedOrders } // Automatically links orders!
+        }
+      })
+    );
+
+    // Run in batches of 250 to avoid database timeouts
+    if (batchPromises.length >= 250) {
+      await prisma.$transaction(batchPromises);
+      totalSaved += batchPromises.length;
+      console.log(`[BULK] Saved ${totalSaved} buyer profiles...`);
+      batchPromises = [];
     }
   }
+
+  // Catch the remaining profiles
+  if (batchPromises.length > 0) {
+    await prisma.$transaction(batchPromises);
+    totalSaved += batchPromises.length;
+  }
+
+  console.log(`[BULK COMPLETE] Total Buyer Profiles Built: ${totalSaved}`);
 }
 
 
@@ -428,7 +498,7 @@ export function calculateRiskSegment(profile) {
   if (cancelled >= 3 && cancelRate >= 0.4) reasons.push("High Cancellation Rate");
   if (total >= 5 && valid === 0) reasons.push("Spam/Bot Behavior");
   if (cod >= 3 && codRate >= 0.8 && valid === 0) reasons.push("High COD Abuse Risk");
-E
+
  // 5. THE MATHEMATICAL ENGINE
   let segment = "New";
 
@@ -486,220 +556,6 @@ E
     riskReasons: reasons.length > 0 ? reasons.join(", ") : null 
   };
 }
-
-
-
-
-
-
-
-
-
-// /* ================= 2. BULK PROFILE BUILDER ================= */
-// export async function buildHistoricalBuyerProfiles(shop) {
-//   console.log(`[BULK SYNC] Starting historical profile aggregation for ${shop}...`);
-
-//   // Wipe the slate clean before rebuilding to clear ghost profiles
-//   await prisma.zippyy_buyer_profile.deleteMany({ where: { shop } });
-
-//   const allOrders = await prisma.shopify_store_order.findMany({
-//     where: { shop },
-//     orderBy: { createdAt: "asc" } 
-//   });
-
-//   const identityMap = new Map();
-//   allOrders.forEach(order => {
-//     if (order.customerId) {
-//       if (!identityMap.has(order.customerId)) {
-//         identityMap.set(order.customerId, { email: null, phone: null });
-//       }
-//       const idRecord = identityMap.get(order.customerId);
-//       if (order.customerEmail && !idRecord.email) idRecord.email = order.customerEmail.trim().toLowerCase();
-//       if (order.customerPhone && !idRecord.phone) idRecord.phone = order.customerPhone.trim();
-//     }
-//   });
-
-//   const customerMap = new Map();
-
-//   allOrders.forEach((order) => {
-//     let safeEmail = order.customerEmail?.trim().toLowerCase() || null;
-//     let safePhone = order.customerPhone?.trim() || null;
-//     const safeCustId = order.customerId?.trim() || null;
-
-//     if (safeCustId && identityMap.has(safeCustId)) {
-//       const enriched = identityMap.get(safeCustId);
-//       safeEmail = safeEmail || enriched.email;
-//       safePhone = safePhone || enriched.phone;
-//     }
-
-//     const buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${order.shopifyOrderId}`;
-
-//     if (!customerMap.has(buyerIdentifier)) {
-//       customerMap.set(buyerIdentifier, {
-//         buyerIdentifier,
-//         customerEmail: safeEmail,
-//         customerPhone: safePhone,
-//         customerId: safeCustId,
-//         totalorders: 0,
-//         validOrderCount: 0,
-//         totalSpend: 0,
-//         fulfilledCount: 0,
-//         cancelledCount: 0,
-//         rtoCount: 0,
-//         codCount: 0,
-//         unpaidCount: 0,
-//         disputeCount: 0,
-//         refundCount: 0,
-//       });
-//     }
-
-//     const profile = customerMap.get(buyerIdentifier);
-//     profile.totalorders += 1;
-
-//     const fStatus = order.financialStatus?.toUpperCase();
-//     const fulfillment = order.fulfillmentStatus?.toUpperCase();
-//     const isCod = order.paymentGateway?.toLowerCase().includes("cod") || order.paymentGateway?.toLowerCase().includes("cash");
-    
-//     if (isCod) profile.codCount += 1;
-//     if (order.hasDispute) profile.disputeCount += 1;
-
-//     // --- LOGISTICS TRACKING (Correct Priority) ---
-//     if (order.cancelledAt || fulfillment === "CANCELLED") {
-//       profile.cancelledCount += 1;
-//     } else if (order.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
-//       profile.rtoCount += 1;
-//     } else if (fulfillment === "FULFILLED") {
-//       profile.fulfilledCount += 1;
-//     }
-
-//     if (fStatus === "PENDING") profile.unpaidCount += 1;
-//     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
-
-//     // Valid Order Gatekeeper
-//     const isClean = !order.cancelledAt && !(order.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !order.hasDispute;
-//     if (fStatus === "PAID" && fulfillment === "FULFILLED" && isClean) {
-//       profile.validOrderCount += 1;
-//       profile.totalSpend += Number(order.orderValue || 0);
-//     }
-//   });
-
-//   for (const [identifier, profile] of customerMap.entries()) {
-    
-//     // CALL THE HELPER FUNCTION HERE
-//     const { segment, riskReasons } = calculateRiskSegment(profile);
-
-//     try {
-//       await prisma.zippyy_buyer_profile.upsert({
-//         where: { shop_buyerIdentifier: { shop, buyerIdentifier: identifier } },
-//         update: { ...profile, buyerSegment: segment, riskReasons: riskReasons },
-//         create: { shop, ...profile, buyerSegment: segment, riskReasons: riskReasons }
-//       });
-//     } catch (err) {
-//       console.error(`[BULK ERROR]`, err.message);
-//     }
-//   }
-// }
-
-// /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */
-// export async function updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid) {
-//   try {
-//     let safeEmail = customerEmail?.trim().toLowerCase() || null;
-//     let safePhone = customerPhone?.trim() || null;
-//     const safeCustId = customerId?.trim() || null;
-
-//     if (safeCustId && (!safeEmail || !safePhone)) {
-//       const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
-//         where: { shop, customerId: safeCustId }
-//       });
-//       if (existingProfile) {
-//         safeEmail = safeEmail || existingProfile.customerEmail;
-//         safePhone = safePhone || existingProfile.customerPhone;
-//       }
-//     }
-
-//     const buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${orderGid}`;
-
-//     const allCustomerOrders = await prisma.shopify_store_order.findMany({
-//       where: {
-//         shop,
-//         OR: [
-//           safeEmail ? { customerEmail: safeEmail } : undefined,
-//           safeCustId ? { customerId: safeCustId } : undefined,
-//           safePhone ? { customerPhone: safePhone } : undefined,
-//           { shopifyOrderId: `gid://shopify/Order/${orderGid}` },
-//           { shopifyOrderId: orderGid }
-//         ].filter(Boolean)
-//       }
-//     });
-
-//     let profile = {
-//       totalorders: allCustomerOrders.length,
-//       validOrderCount: 0,
-//       totalSpend: 0,
-//       fulfilledCount: 0,
-//       cancelledCount: 0,
-//       rtoCount: 0,
-//       codCount: 0,
-//       unpaidCount: 0,
-//       disputeCount: 0,
-//       refundCount: 0,
-//     };
-    
-//     allCustomerOrders.forEach(o => {
-//       const fStatus = o.financialStatus?.toUpperCase();
-//       const fulfillment = o.fulfillmentStatus?.toUpperCase();
-//       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
-      
-//       if (isCod) profile.codCount += 1;
-//       if (o.hasDispute) profile.disputeCount += 1;
-
-//       // Logistics Tracking
-//       if (o.cancelledAt || fulfillment === "CANCELLED") {
-//         profile.cancelledCount += 1;
-//       } else if (o.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
-//         profile.rtoCount += 1;
-//       } else if (fulfillment === "FULFILLED" ||fulfillment === "SUCCESS"  || fulfillment === "DELIVERED") {
-//         profile.fulfilledCount += 1;
-//       }
-     
-//       if (fStatus === "PENDING") profile.unpaidCount += 1;
-      
-//       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") {
-//         profile.refundCount += 1;
-//       }
-
-//       // --- NET REVENUE GATEKEEPER ---
-//       const isEligibleForRevenue = (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && 
-//                                    (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") && 
-//                                    !o.hasDispute && 
-//                                    !o.cancelledAt && 
-//                                    !o.isRTO;
-
-//       if (isEligibleForRevenue) {
-//         profile.validOrderCount += 1;
-//         const grossValue = Number(o.orderValue || 0);
-//         const refundedAmount = Number(o.totalRefundedAmount || 0); 
-//         const netValue = grossValue - refundedAmount;
-//         profile.totalSpend += netValue;
-//       }
-//     });
-
-//     // CALL THE HELPER FUNCTION HERE
-//     const { segment, riskReasons } = calculateRiskSegment(profile);
-
-//     await prisma.zippyy_buyer_profile.upsert({
-//       where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
-//       update: { ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId },
-//       create: { shop, buyerIdentifier, ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId }
-//     });
-
-//     console.log(` [PROFILE UPDATER] Successfully updated profile for ${buyerIdentifier}`);
-//   } catch (error) {
-//     console.error("[PROFILE UPDATER ERROR]:", error);
-//   }
-// }
-
-
 
 
 
