@@ -76,7 +76,11 @@ webhooks: {
     deliveryMethod: DeliveryMethod.Http,
     callbackUrl: "/webhooks/orders/updated",
   },
-
+   CUSTOMERS_UPDATE: {
+      deliveryMethod: "http",
+      callbackUrl: "/webhooks/customers/update",
+    },
+    
   BULK_OPERATIONS_FINISH: {
     deliveryMethod: DeliveryMethod.Http,
     callbackUrl: "/webhooks/bulk/finish",

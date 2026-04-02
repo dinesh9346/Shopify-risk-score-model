@@ -458,7 +458,7 @@ export default function Index() {
       return "cancelled";
     }
 
-    if (ship === "delivered") return "delivered";
+    if (ship === "delivered" || fulfill === "delivered"||ship ==="Delivered") return "delivered";
     if (SHIPMENT_IN_TRANSIT.has(ship)) return "in_transit";
     if (SHIPMENT_PRE_TRANSIT.has(ship)) return "pre_transit";
     if (SHIPMENT_PENDING.has(ship)) return "pending";
@@ -499,7 +499,7 @@ export default function Index() {
   const orderHistoryTabs = [
     { id: "unfulfilled", content: "Unfulfilled" },
     { id: "pending-dispatch", content: "Pending Dispatch" },
-    { id: "pre-transit", content: "Pre-Transit" }, // <-- NEW TAB
+    { id: "pre-transit", content: "Pre-Transit" }, 
     { id: "in-transit", content: "In Transit" },
     { id: "delivered", content: "Delivered" },
     { id: "rto", content: "RTO / Failed" },
@@ -582,7 +582,7 @@ export default function Index() {
       const bucket = getOrderBucket(order);
       if (orderHistoryTab === 0) return bucket === "unfulfilled";
       if (orderHistoryTab === 1) return bucket === "pending";
-      if (orderHistoryTab === 2) return bucket === "pre_transit"; // <-- Handled Index 2
+      if (orderHistoryTab === 2) return bucket === "pre_transit"; 
       if (orderHistoryTab === 3) return bucket === "in_transit";
       if (orderHistoryTab === 4) return bucket === "delivered";
       if (orderHistoryTab === 5) return bucket === "rto";

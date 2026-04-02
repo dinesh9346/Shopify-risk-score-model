@@ -124,7 +124,9 @@ model zippyy_buyer_profile {
   customerEmail         String? 
   customerId            String?  
   customerPhone         String?
-
+  shippingAddress1    String?
+  shippingCountry     String?
+  billingCountry      String?
   // Aggregate Stats
   totalorders Int      @default(0)
   validOrderCount       Int      @default(0)

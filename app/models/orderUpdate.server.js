@@ -74,3 +74,79 @@ export async function processOrderUpdate(shop, payload) {
     throw error;
   }
 }
+export async function syncCustomerProfile(shop, customerPayload) {
+  try {
+    const customerId = String(customerPayload.id);
+    
+    if (!customerId || customerId === 'undefined') {
+      return { success: false, error: "Invalid customer ID in payload" };
+    }
+
+    // Basic Contact Info mapped to schema names
+    const email = customerPayload.email || null;
+    const firstName = customerPayload.first_name || null;
+    const lastName = customerPayload.last_name || null;
+    const phone = customerPayload.phone || null;
+    const accountState = customerPayload.state; // 'disabled', 'invited', 'declined', 'enabled'
+
+    // Address & Location Info (Extracted from Shopify's default_address object)
+    const defaultAddress = customerPayload.default_address || {};
+    const address1 = defaultAddress.address1 || null;
+    const country = defaultAddress.country || null;
+
+    // Upsert into Prisma using the new table name: zippyy_buyer_profile
+    const profile = await prisma.zippyy_buyer_profile.upsert({
+      where: { shop_buyerIdentifier: { shop, buyerIdentifier: customerId } }, 
+      update: {
+        customerEmail: email,
+        firstName: firstName,
+        lastName: lastName,
+        customerPhone: phone,
+        
+        // Re-added location fields so they update if the customer changes their default address
+        shippingAddress1: address1,
+        shippingCountry: country,
+        billingCountry: country,
+
+        // If the merchant manually disabled the account, force a Watchlist flag.
+        ...(accountState === 'disabled' && { buyerSegment: 'Watchlist', riskReasons: 'Account Disabled by Merchant' }),
+      },
+      create: {
+        shop: shop,
+        buyerIdentifier: customerId, 
+        customerId: customerId,
+        customerEmail: email,
+        firstName: firstName,
+        lastName: lastName,
+        customerPhone: phone,
+
+        // Re-added location fields for initial creation
+        shippingAddress1: address1,
+        shippingCountry: country,
+        billingCountry: country,
+
+        buyerSegment: accountState === 'disabled' ? 'Watchlist' : 'New',
+        riskReasons: accountState === 'disabled' ? 'Account Disabled by Merchant' : null,
+        
+        // Metric Defaults mapped to schema names
+        totalorders: 0,       
+        validOrderCount: 0, 
+        totalSpend: 0.0,      
+        fulfilledCount: 0,
+        cancelledCount: 0, 
+        rtoCount: 0, 
+        codCount: 0, 
+        unpaidCount: 0, 
+        disputeCount: 0,
+        refundCount: 0
+      }
+    });
+
+    console.log(`[Risk Engine] Synced identity for customer ${customerId}`);
+    return { success: true, profile };
+
+  } catch (error) {
+    console.error(`[Risk Engine Error] Error syncing customer ${customerPayload?.id}:`, error);
+    return { success: false, error: error.message };
+  }
+}

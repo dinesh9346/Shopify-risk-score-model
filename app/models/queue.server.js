@@ -4,6 +4,7 @@ import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageComm
 import { handleBulkFinishWebhook } from "./bulkWebhook.server.js";
 import { calculateAndApplyRiskScore } from "./riskAssessment.server.js";
 import { processOrderUpdate } from "./orderUpdate.server.js";
+import {syncCustomerProfile}  from "./orderUpdate.server.js";
 import { pushRiskToShopify } from "./pushRiskScore.server.js";
 import { processFulfillmentUpdate } from "./fulfillmentUpdate.server.js";
 const QUEUE_URL = process.env.SQS_QUEUE_URL || "https://sqs.us-west-1.amazonaws.com/571109166839/apac-shopify-data-collection-queue-dev.fifo";
@@ -104,6 +105,11 @@ async function processDatabaseLogic(topic, shop, payload) {
     case 'ORDERS_UPDATED':
       console.log(`[SQS ROUTER] Routing to Order Update logic for ${shop}`);
       await processOrderUpdate(shop, payload);
+      break;
+    case "CUSTOMERS_UPDATE":
+      console.log(`[SQS ROUTER] Routing to Customer Update logic for ${shop}`);
+      // CUSTOMERS_UPDATE payload is the customer object, so passing payload directly is correct here
+      await syncCustomerProfile(shop, payload);
       break;
     
     case "DISPUTES_CREATE":

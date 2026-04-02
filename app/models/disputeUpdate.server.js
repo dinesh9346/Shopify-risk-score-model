@@ -1,7 +1,7 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 
-export async function processDisputeUpdate(shop, payload) {
+export async function processDisputeUpdate(topic,shop, payload) {
   console.log(`[Dispute Update] Processing dispute for order: ${payload.order_id}`);
 
   try {
