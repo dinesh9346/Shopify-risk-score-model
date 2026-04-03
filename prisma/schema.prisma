@@ -64,7 +64,8 @@ model shopify_store_order {
   billingProvince   String?
   billingZip        String?
   billingCountry    String?
-
+  addressVerified  Boolean @default(false)
+  addressFingerprint String? // Used to detect if the address changed
   hasDispute        Boolean  @default(false)
   isRTO             Boolean  @default(false)
 
@@ -172,7 +173,32 @@ model merchant_feedback {
   @@schema("risk_score_model")
 }
 
-
+// Add this model to your schema.prisma
+model zippyy_risk_settings {
+  id                    String   @id @default(uuid())
+  shop                  String   @unique
+  guestCodPenalty       Int      @default(15)
+  shortNamePenalty      Int      @default(20)
+  missingAddressPenalty Int      @default(30)
+  missingHouseNoPenalty Int      @default(15)
+  cancelWeight          Int      @default(35)
+  disputeWeight         Int      @default(50)
+  rtoWeight             Int      @default(35)
+  abandonWeight         Int      @default(25)
+  zeroValuePenalty      Int      @default(25)
+  refundWeight          Int      @default(25)
+  pendingPaymentPenalty Int      @default(20)
+  codAbuseWeight        Int      @default(20)
+  valueAnomalyPenalty   Int      @default(15)
+  loyaltyBonus          Int      @default(5)
+  addressFraudPenalty   Int      @default(30)
+  phoneFraudPenalty     Int      @default(30)
+  hoardingHighPenalty   Int      @default(30)
+  hoardingMedPenalty    Int      @default(15)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  @@schema("risk_score_model")
+}
 
 
 

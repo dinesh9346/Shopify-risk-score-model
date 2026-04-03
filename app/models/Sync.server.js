@@ -352,23 +352,39 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     let safeLastName = null;
 
     // Default identifier if they are completely new
-    let buyerIdentifier = safeEmail || safePhone || safeCustId || `guest-${orderGid}`;
+    let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
 
-   // 1. Attempt to find an existing profile using any available identifier
-    const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
-      where: {
-        shop,
-        OR: [
-          safeEmail ? { customerEmail: safeEmail } : undefined,
-          safeCustId ? { customerId: safeCustId } : undefined,
-          safePhone ? { customerPhone: safePhone } : undefined,
-        ].filter(Boolean) // Cleans out any undefined rules
+    // 1. Attempt to find an existing profile
+    let existingProfile = null;
+
+    // First, if we have customerId, check if a profile exists with buyerIdentifier = customerId
+    if (safeCustId) {
+      existingProfile = await prisma.zippyy_buyer_profile.findUnique({
+        where: { shop_buyerIdentifier: { shop, buyerIdentifier: safeCustId } }
+      });
+      if (existingProfile) {
+        buyerIdentifier = safeCustId;
       }
-    });
+    }
+
+    // If not found, search by other identifiers
+    if (!existingProfile) {
+      existingProfile = await prisma.zippyy_buyer_profile.findFirst({
+        where: {
+          shop,
+          OR: [
+            safeEmail ? { customerEmail: safeEmail } : undefined,
+            safeCustId ? { customerId: safeCustId } : undefined,
+            safePhone ? { customerPhone: safePhone } : undefined,
+          ].filter(Boolean) // Cleans out any undefined rules
+        }
+      });
+      if (existingProfile) {
+        buyerIdentifier = existingProfile.buyerIdentifier;
+      }
+    }
 
     if (existingProfile) {
-      buyerIdentifier = existingProfile.buyerIdentifier; 
-     
       safeEmail = safeEmail || existingProfile.customerEmail;
       safePhone = safePhone || existingProfile.customerPhone;
       safeFirstName = existingProfile.firstName || null;

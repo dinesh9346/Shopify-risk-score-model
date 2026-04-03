@@ -120,7 +120,7 @@ export async function syncCustomerProfile(shop, customerPayload) {
         lastName: lastName,
         customerPhone: phone,
 
-        // Re-added location fields for initial creation
+        
         shippingAddress1: address1,
         shippingCountry: country,
         billingCountry: country,

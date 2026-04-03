@@ -100,16 +100,27 @@ export const loader = async ({ request }) => {
     if (group.buyerSegment) segmentCounts[group.buyerSegment] = group._count.buyerSegment;
   });
 
+  // Deduplicate profiles by customer identifier to avoid displaying the same customer multiple times
+  const uniqueProfiles = [];
+  const seenCustomers = new Set();
+  for (const p of profilesData) {
+    const key = p.customerId || p.customerEmail || p.customerPhone || p.id;
+    if (!seenCustomers.has(key)) {
+      seenCustomers.add(key);
+      uniqueProfiles.push(p);
+    }
+  }
+
   const totals = globalStats._sum;
   const safeFulfillmentRate = totals.totalorders > 0 
     ? Math.round((totals.fulfilledCount / totals.totalorders) * 100) 
     : 0;
 
   // 3. Fetch recent orders for ALL profiles in the current segment 
-  const profileIds = profilesData.map(p => p.id);
-  const emails = [...new Set(profilesData.map(p => p.customerEmail).filter(Boolean))];
-  const phones = [...new Set(profilesData.map(p => p.customerPhone).filter(Boolean))];
-  const customerIds = [...new Set(profilesData.map(p => p.customerId).filter(Boolean))];
+  const profileIds = uniqueProfiles.map(p => p.id);
+  const emails = [...new Set(uniqueProfiles.map(p => p.customerEmail).filter(Boolean))];
+  const phones = [...new Set(uniqueProfiles.map(p => p.customerPhone).filter(Boolean))];
+  const customerIds = [...new Set(uniqueProfiles.map(p => p.customerId).filter(Boolean))];
 
   const relevantOrders = await prisma.shopify_store_order.findMany({
     where: {
@@ -146,7 +157,7 @@ export const loader = async ({ request }) => {
     if (order.customerId) ordersByCustomerId.set(order.customerId, [...(ordersByCustomerId.get(order.customerId) || []), order]);
   }
 
-  const profiles = profilesData.map((p) => {
+  const profiles = uniqueProfiles.map((p) => {
     let displayName = [p.firstName, p.lastName].filter(Boolean).join(" ");
     if (!displayName) displayName = p.customerEmail;
     if (!displayName) displayName = p.customerPhone;

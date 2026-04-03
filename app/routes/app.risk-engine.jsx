@@ -1,339 +1,305 @@
-import { useLoaderData, useSearchParams, useRevalidator  } from "react-router";
-import { boundary } from "@shopify/shopify-app-react-router/server";
-import { useState, useMemo, useEffect } from "react"; 
-import "@shopify/polaris/build/esm/styles.css";
-import enTranslations from "@shopify/polaris/locales/en.json";
-
-import {
-  AppProvider,
-  Page,
-  Layout,
-  Card,
-  BlockStack,
-  Text,
-  Badge,
-  IndexTable,
-  Grid,
-  Banner,
-  Box,
-  Popover,
-  Button,
-  Link,
-  InlineStack,
-  Tabs 
+import { useState, useCallback, useEffect } from "react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "react-router";
+import { 
+  Page, Layout, Card, Text, BlockStack, InlineStack, 
+  Badge, Divider, Box, TextField, InlineGrid
 } from "@shopify/polaris";
+import prisma from "../db.server"; // Adjust path if necessary
+import { authenticate } from "../shopify.server"; // Adjust path if necessary
 
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+// --- 1. DEFAULT WEIGHTS ---
+const DEFAULT_WEIGHTS = {
+  guestCodPenalty: 15, shortNamePenalty: 20, missingAddressPenalty: 30,
+  missingHouseNoPenalty: 15, cancelWeight: 35, disputeWeight: 50,
+  rtoWeight: 35, abandonWeight: 25, zeroValuePenalty: 25,
+  refundWeight: 25, pendingPaymentPenalty: 20, codAbuseWeight: 20,
+  valueAnomalyPenalty: 15, loyaltyBonus: 5, addressFraudPenalty: 30,
+  phoneFraudPenalty: 30, hoardingHighPenalty: 30, hoardingMedPenalty: 15
+};
 
-//BACKEND LOADER
+// --- 2. LOADER: Fetch Data ---
 export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  try {
-    const orderCount = await prisma.shopify_store_order.count({
-      where: { shop }
-    });
+  let settings = await prisma.zippyy_risk_settings.findUnique({
+    where: { shop }
+  });
 
-    const recentScores = await prisma.zippyy_risk_score.findMany({
-      where: { shop },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        order: true
-      }
-    });
+  // Merge with defaults in case new fields were added to the schema later
+  const currentSettings = settings ? { ...DEFAULT_WEIGHTS, ...settings } : DEFAULT_WEIGHTS;
 
-    const safeScores = recentScores.map((score) => ({
-      id: score.id,
-      orderId: score.order?.shopifyOrderId || score.orderId, 
-      orderValue: Number(score.order?.orderValue ?? 0),
-      paymentType: score.order?.financialStatus || "UNKNOWN",
-      
-      // Pulls Email first, then Phone, then defaults to "Guest"
-      customerName: score.order?.customerEmail || score.order?.customerPhone || "Guest",
-      
-      riskLevel: score.riskLevel,
-      score: score.score,
-      reasons: score.reasons,
-      createdAt: score.createdAt ? score.createdAt.toISOString() : null,
-    }));
-
-    const highRiskCount = safeScores.filter((o) => o.riskLevel === "HIGH").length;
-    const mediumRiskCount = safeScores.filter((o) => o.riskLevel === "MEDIUM").length;
-
-    return Response.json({
-      error: null,
-      orderCount,
-      recentScores: safeScores,
-      kpis: {
-        totalAnalyzed: safeScores.length,
-        highRiskCount,
-        mediumRiskCount
-      }
-    });
-
-  } catch (error) {
-    console.error("Loader error:", error);
-    return Response.json({
-      error: error.message,
-      orderCount: 0,
-      recentScores: [],
-      kpis: { totalAnalyzed: 0, highRiskCount: 0, mediumRiskCount: 0 }
-    });
-  }
+  return { settings: currentSettings };
 };
 
-
-const RiskBadge = ({ level }) => {
-  let tone = "success";
-  if (level === "HIGH") tone = "critical";
-  if (level === "MEDIUM") tone = "warning";
-
-  return (
-    <Badge tone={tone}>
-      {level}
-    </Badge>
-  );
-};
-
-const ReasonsPopover = ({ reasons, active, onToggle }) => {
-  const reasonsList = reasons
-    ? reasons.split(/[|,\n]/).map((r) => r.trim()).filter(Boolean)
-    : [];
-
-  return (
-    <Popover
-      active={active}
-      activator={
-        <Button onClick={onToggle} plain monochrome removeUnderline>
-          <Text variant="bodyMd" tone="subdued" decoration="underline">
-            {reasonsList.length > 0 ? "View Reasons" : "No reasons"}
-          </Text>
-        </Button>
-      }
-      onClose={onToggle}
-      sectioned={false}
-    >
-      <Box padding="400" width="350px">
-        <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text variant="headingSm" as="h3">Assessment Reasons</Text>
-            <Button onClick={onToggle} plain tone="critical">Close</Button>
-          </InlineStack>
-
-          <BlockStack gap="200">
-            {reasonsList.length > 0 ? (
-              reasonsList.map((reason, index) => (
-                <Box 
-                  key={index} 
-                  padding="200" 
-                  background="bg-surface-secondary" 
-                  borderRadius="100"
-                  borderWidth="100"
-                  borderColor="border-subdued"
-                >
-                  <Text variant="bodySm" as="p">
-                    • {reason}
-                  </Text>
-                </Box>
-              ))
-            ) : (
-              <Text tone="subdued">No detailed reasons provided.</Text>
-            )}
-          </BlockStack>
-        </BlockStack>
-      </Box>
-    </Popover>
-  );
-};
-
- //DASHBOARD UI 
-
-function DashboardUI() {
-  const data = useLoaderData() || {};
-  const [activePopoverId, setActivePopoverId] = useState(null);
+// --- 3. ACTION: Save Data ---
+export const action = async ({ request }) => {
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
   
-  // URL Param checking
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get("tab");
-  
-  const [selectedTab, setSelectedTab] = useState(0);
+  const data = await request.json();
 
-  const { revalidate, state } = useRevalidator();
+  // Strip out UI-specific or unrelated keys, keep only safe numbers (0-100)
+  const sanitizedData = {};
+  Object.keys(DEFAULT_WEIGHTS).forEach(key => {
+    // If empty string or NaN, default to 0. Clamp between 0 and 100.
+    let val = parseInt(data[key], 10);
+    if (isNaN(val)) val = 0;
+    sanitizedData[key] = Math.max(0, Math.min(100, val));
+  });
 
-  // Sync the UI tab state with the URL parameter 
-  useEffect(() => {
-    if (tabParam === "high-risk") setSelectedTab(1);
-    else if (tabParam === "medium-risk") setSelectedTab(2);
-    else setSelectedTab(0);
-  }, [tabParam]);
+  await prisma.zippyy_risk_settings.upsert({
+    where: { shop },
+    update: sanitizedData,
+    create: { shop, ...sanitizedData }
+  });
 
-  if (!data || data.error) {
-    return (
-      <Page title="System Error">
-        <Banner tone="critical" title="Data Load Error">
-          <p>{data?.error || "Could not retrieve dashboard data."}</p>
-        </Banner>
-      </Page>
-    );
-  }
+  return { success: true };
+};
 
-  const recentScores = data.recentScores || [];
-  const kpis = data.kpis || { totalAnalyzed: 0, highRiskCount: 0, mediumRiskCount: 0 };
-  const orderCount = data.orderCount || 0;
+// --- 4. MAIN UI COMPONENT ---
+export default function RiskEngineSettings() {
+  const { settings } = useLoaderData();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const actionData = useActionData();
+  const isSaving = navigation.state === "submitting";
 
-  const tabs = [
-    { id: "all", content: "All Analyzed" },
-    { id: "high-risk", content: "High Risk" },
-    { id: "medium-risk", content: "Medium Risk" },
-  ];
+  // React State to strictly control the form inputs
+  const [formData, setFormData] = useState(settings);
+  const [hasChanges, setHasChanges] = useState(false);
 
-  const handleTabChange = (selectedTabIndex) => {
-    setSelectedTab(selectedTabIndex);
-    if (selectedTabIndex === 1) setSearchParams({ tab: "high-risk" }, { replace: true });
-    else if (selectedTabIndex === 2) setSearchParams({ tab: "medium-risk" }, { replace: true });
-    else setSearchParams({}, { replace: true });
+  // Handle number input changes with clamping
+  const handleChange = useCallback((value, id) => {
+    // Allow empty string temporarily so user can delete and type new numbers
+    let safeValue = value;
+    if (value !== "") {
+      // Clamp the visual input between 0 and 100
+      safeValue = Math.max(0, Math.min(100, Number(value)));
+    }
+
+    setFormData((prev) => {
+      const newData = { ...prev, [id]: safeValue };
+      // Check if data actually changed from the DB settings to enable Save button
+      setHasChanges(JSON.stringify(newData) !== JSON.stringify(settings));
+      return newData;
+    });
+  }, [settings]);
+
+  // Handle form submission via JSON
+  const handleSave = () => {
+    // Ensure any empty fields are converted to 0 before saving
+    const payload = { ...formData };
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === "") payload[key] = 0;
+    });
+
+    submit(payload, { 
+      method: "post", 
+      encType: "application/json" 
+    });
   };
 
-  const filteredScores = useMemo(() => {
-    if (selectedTab === 1) return recentScores.filter((s) => s.riskLevel === "HIGH");
-    if (selectedTab === 2) return recentScores.filter((s) => s.riskLevel === "MEDIUM");
-    return recentScores;
-  }, [recentScores, selectedTab]);
-
-  const rows = filteredScores.map(
-    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName }, index) => {
-      const cleanId = orderId ? orderId.replace("gid://shopify/Order/", "") : "N/A";
-      
-      const formattedDate = createdAt 
-        ? new Intl.DateTimeFormat('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }).format(new Date(createdAt))
-        : "N/A";
-
-      return (
-        <IndexTable.Row id={id} key={id} position={index}>
-          <IndexTable.Cell><Text as="span">{formattedDate}</Text></IndexTable.Cell>
-          <IndexTable.Cell>
-            <Link url={`shopify:admin/orders/${cleanId}`} removeUnderline target="_top">
-              <Text fontWeight="bold" as="span">#{cleanId}</Text>
-            </Link>
-          </IndexTable.Cell>
-          <IndexTable.Cell><Text as="span">{customerName}</Text></IndexTable.Cell>
-          <IndexTable.Cell><Text as="span" numeric>₹{Number(orderValue || 0).toFixed(2)}</Text></IndexTable.Cell>
-          <IndexTable.Cell><Badge tone="info">{paymentType || "UNKNOWN"}</Badge></IndexTable.Cell>
-          <IndexTable.Cell><RiskBadge level={riskLevel} /></IndexTable.Cell>
-          <IndexTable.Cell>
-            <ReasonsPopover 
-              reasons={reasons} 
-              active={activePopoverId === id}
-              onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
-            />
-          </IndexTable.Cell>
-        </IndexTable.Row>
-      );
+  // Reset "hasChanges" when save is successful and trigger toast
+  useEffect(() => {
+    if (actionData?.success && !isSaving) {
+      setHasChanges(false);
+      if (typeof shopify !== 'undefined' && shopify.toast) {
+        shopify.toast.show("Risk settings updated successfully");
+      }
     }
+  }, [actionData, isSaving]);
+
+  // Premium UI Component for a settings input
+  const WeightInput = ({ id, label, helpText, isBonus = false }) => (
+    <Box>
+      <BlockStack gap="100">
+        <InlineStack gap="200" align="start" blockAlign="center">
+          <Text as="p" fontWeight="medium">{label}</Text>
+          <Badge tone={isBonus ? "success" : "critical"} size="small">
+            {isBonus ? "Reward" : "Penalty"}
+          </Badge>
+        </InlineStack>
+        <TextField
+          type="number"
+          value={formData[id].toString()}
+          onChange={(val) => handleChange(val, id)}
+          helpText={helpText}
+          autoComplete="off"
+          min={0}
+          max={100}
+        />
+      </BlockStack>
+    </Box>
   );
 
   return (
     <Page 
-      title="Zippyy Risk Engine" 
-      subtitle="Real-time fraud analysis and prevention"
+      title="Risk Engine Configuration" 
       primaryAction={{
-        content: "Refresh Data",
-        onAction: () => revalidate(),
-        loading: state === "loading",
+        content: isSaving ? 'Saving...' : 'Save Configuration',
+        onAction: handleSave,
+        disabled: !hasChanges || isSaving,
+        loading: isSaving,
       }}
     >
       <Layout>
+        {/* --- BRANDING BANNER --- */}
         <Layout.Section>
-          <Banner tone="info">
-            <p>Your Data Warehouse is synced and actively monitoring <strong>{orderCount}</strong> historical orders.</p>
-          </Banner>
+          <Box paddingBlockEnd="200">
+            <Card background="bg-surface-brand">
+              <BlockStack gap="400" align="center" inlineAlign="center">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h1" variant="heading2xl" color="text-brand-on-bg-fill">
+                    Zippyy.ai
+                  </Text>
+                  <Badge tone="info" size="large">Risk Engine</Badge>
+                </InlineStack>
+                <Text as="p" alignment="center" tone="subdued">
+                  Fine-tune the mathematical weights of the AI assessment algorithm. 
+                  Adjust how strictly different behaviors impact the final 0-100% risk score.
+                </Text>
+              </BlockStack>
+            </Card>
+          </Box>
         </Layout.Section>
 
+        {/* --- SECTION: Identity & Checkout --- */}
         <Layout.Section>
-          <Grid>
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
-              <Card background="bg-surface-secondary">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="subdued">Recent Orders Assessed</Text>
-                  <Text variant="headingXl" as="p">{kpis.totalAnalyzed}</Text>
-                </BlockStack>
-              </Card>
-            </Grid.Cell>
-
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
-              <Card background="bg-surface-critical-subdued">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="critical">High Risk Intercepted</Text>
-                  <Text variant="headingXl" as="p" tone="critical">{kpis.highRiskCount}</Text>
-                </BlockStack>
-              </Card>
-            </Grid.Cell>
-
-            <Grid.Cell columnSpan={{ xs: 6, md: 4 }}>
-              <Card background="bg-surface-warning-subdued">
-                <BlockStack gap="100">
-                  <Text variant="headingSm" tone="caution">Medium Risk Flagged</Text>
-                  <Text variant="headingXl" as="p">{kpis.mediumRiskCount}</Text>
-                </BlockStack>
-              </Card>
-            </Grid.Cell>
-          </Grid>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card padding="0">
-            <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange} fitted />
-            
-            <Box padding="400">
-              <Text variant="headingMd" as="h2">Actionable Intelligence Log</Text>
-            </Box>
-            <IndexTable
-              resourceName={{ singular: "order", plural: "orders" }}
-              itemCount={filteredScores.length}
-              selectable={false} 
-              headings={[
-                { title: "Date" },
-                { title: "Order ID" },
-                { title: "Customer" },
-                { title: "Value" },
-                { title: "Payment Method" },
-                { title: "Risk Score" },
-                { title: "Reasons" },
-              ]}
-              emptyState={
-                <Box padding="400">
-                  <Text alignment="center" tone="subdued">No matching risk scores found.</Text>
-                </Box>
-              }
-            >
-              {rows}
-            </IndexTable>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingLg">Identity & Checkout Signals</Text>
+                <Text as="p" tone="subdued">Penalties applied dynamically based on how the order was placed and formatted.</Text>
+              </BlockStack>
+              <Divider />
+              
+              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <WeightInput 
+                  id="guestCodPenalty" 
+                  label="Guest Checkout + COD" 
+                  helpText="Applied when an unlogged user selects Cash on Delivery." 
+                />
+                <WeightInput 
+                  id="shortNamePenalty" 
+                  label="Suspicious/Short Name" 
+                  helpText="Applied for missing names or names with 3 characters or less." 
+                />
+                <WeightInput 
+                  id="missingAddressPenalty" 
+                  label="Missing Shipping Address" 
+                  helpText="Heavy penalty if the street lines are completely empty." 
+                />
+                <WeightInput 
+                  id="missingHouseNoPenalty" 
+                  label="Missing House/Apartment No." 
+                  helpText="Applied if the address string lacks any numeric digits." 
+                />
+              </InlineGrid>
+            </BlockStack>
           </Card>
         </Layout.Section>
+
+        {/* --- SECTION: Historical Behavior --- */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingLg">Historical Logistics</Text>
+                <Text as="p" tone="subdued">Weights applied dynamically based on the customer's past failure rates.</Text>
+              </BlockStack>
+              <Divider />
+
+              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <WeightInput 
+                  id="cancelWeight" 
+                  label="Cancellation Rate Weight" 
+                  helpText="Maximum penalty applied for a 100% cancellation rate." 
+                />
+                <WeightInput 
+                  id="rtoWeight" 
+                  label="RTO (Return to Origin) Weight" 
+                  helpText="Maximum penalty applied for a 100% package rejection rate." 
+                />
+                <WeightInput 
+                  id="refundWeight" 
+                  label="Refund Abuse Weight" 
+                  helpText="Penalty scale for users who frequently request refunds." 
+                />
+                <WeightInput 
+                  id="abandonWeight" 
+                  label="Serial Abandonment Weight" 
+                  helpText="Applied when a user places many orders but fulfills very few." 
+                />
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* --- SECTION: Severe Fraud Signals --- */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingLg">High-Risk Fraud Network Signals</Text>
+                <Text as="p" tone="subdued">Severe penalties for behavior indicating coordinated fraud, hoarding, or abuse.</Text>
+              </BlockStack>
+              <Divider />
+
+              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <WeightInput 
+                  id="addressFraudPenalty" 
+                  label="Address Fraud Network" 
+                  helpText="Triggered when 4+ unique emails ship to the exact same address." 
+                />
+                <WeightInput 
+                  id="phoneFraudPenalty" 
+                  label="Phone Network Abuse" 
+                  helpText="Triggered when 4+ unique emails use the same phone number." 
+                />
+                <WeightInput 
+                  id="disputeWeight" 
+                  label="Chargeback / Dispute Rate" 
+                  helpText="Massive penalty applied to users with a history of disputes." 
+                />
+                <WeightInput 
+                  id="hoardingHighPenalty" 
+                  label="Targeted Hoarding (5+ attempts)" 
+                  helpText="Penalty for attempting to order the exact same SKU 5+ times without paying." 
+                />
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* --- SECTION: Rewards --- */}
+        <Layout.Section>
+          <Card background="bg-surface-success">
+            <BlockStack gap="400">
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingLg">Customer Loyalty Adjustments</Text>
+                <Text as="p" tone="subdued">These metrics SUBTRACT points from the final risk score, rewarding good buyers.</Text>
+              </BlockStack>
+              <Divider />
+              
+              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <WeightInput 
+                  id="loyaltyBonus" 
+                  label="Loyalty Point Reduction" 
+                  helpText="Subtracts this % for every paid & delivered order in their history (Max 30% reduction)." 
+                  isBonus={true}
+                />
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Bottom padding for scrolling clearance */}
+        <Layout.Section>
+          <div style={{ height: '40px' }} />
+        </Layout.Section>
+
       </Layout>
     </Page>
   );
 }
-
-//APP WRAPPER 
-
-export default function Index() {
-  return (
-    <AppProvider i18n={enTranslations}>
-      <DashboardUI />
-    </AppProvider>
-  );
-}
-
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
-
