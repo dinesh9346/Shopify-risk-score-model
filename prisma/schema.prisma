@@ -200,7 +200,17 @@ model zippyy_risk_settings {
   @@schema("risk_score_model")
 }
 
+model India_valid_pincodes {
+  id          String   @id @default(cuid())
+  countryCode String   @default("IN")
+  postalCode  String   @unique // The 6-digit PIN
+  placeName   String?  // e.g., "Mangalhat"
+  state       String?  // e.g., "Telangana"
+  district    String?  // e.g., "Hyderabad"
 
+  @@index([postalCode]) // Crucial for 0-latency lookups
+  @@schema("risk_score_model")
+}
 
 
 

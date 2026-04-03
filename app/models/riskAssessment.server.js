@@ -271,18 +271,46 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         });
       }
 
-      if (!cleanZip || cleanZip.length < 4) {
-        riskPercentage += 20; 
-        reasons.push({ 
-          description: `Logistics API Alert: Verified real-world address, but Postal/ZIP Code is missing or incomplete.`,
-          sentiment: "NEGATIVE" 
-        });
-      } else if (/^(0+|1+|12345\d*)$/.test(cleanZip)) {
-        riskPercentage += 30; 
-        reasons.push({ 
-          description: `Logistics API Alert: Verified real-world address, but fake Postal/ZIP Code sequence detected (${shippingZip}).`, 
-          sentiment: "NEGATIVE" 
-        });
+      // 2. Check Pincode/ZIP Code
+      if (shippingCountry === "IN" || shippingCountry === "India") {
+        if (!/^[1-9][0-9]{5}$/.test(cleanZip)) {
+          riskPercentage += 80; 
+          reasons.push({ 
+            description: `Logistics API Alert: Verified real-world address, but invalid Indian PIN Code format (${shippingZip}).`, 
+            sentiment: "NEGATIVE" 
+          });
+          console.log(`[Pincode DB]  Skipped DB check. Invalid format: ${cleanZip}`);
+        } else {
+          const validPin = await prisma.india_valid_pincodes.findUnique({
+            where: { postalCode: cleanZip }
+          });
+          
+          if (validPin) {
+            console.log(`[Pincode DB]  Match found for PIN: ${cleanZip}`);
+          } else {
+            console.log(`[Pincode DB]  No match found for PIN: ${cleanZip}`);
+            riskPercentage += 80; 
+            reasons.push({ 
+              description: `Logistics Geo-Alert: Verified real-world address, but the postal code (${shippingZip}) does not exist in India. Highly suspicious.`,
+              sentiment: "NEGATIVE" 
+            });
+          }
+        }
+      } else {
+        // Fallback generic logic for non-Indian addresses
+        if (!cleanZip || cleanZip.length < 4) {
+          riskPercentage += 20; 
+          reasons.push({ 
+            description: `Logistics API Alert: Verified real-world address, but Postal/ZIP Code is missing or incomplete.`,
+            sentiment: "NEGATIVE" 
+          });
+        } else if (/^(0+|1+|12345\d*)$/.test(cleanZip)) {
+          riskPercentage += 30; 
+          reasons.push({ 
+            description: `Logistics API Alert: Verified real-world address, but fake Postal/ZIP Code sequence detected (${shippingZip}).`, 
+            sentiment: "NEGATIVE" 
+          });
+        }
       }
 
     } else {
@@ -297,18 +325,46 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         });
       }
 
-      if (!cleanZip || cleanZip.length < 4) {
-        riskPercentage += 20; 
-        reasons.push({ 
-          description: `Logistics API Alert: Postal/ZIP Code is missing or incomplete.`, 
-          sentiment: "NEGATIVE" 
-        });
-      } else if (/^(0+|1+|12345\d*)$/.test(cleanZip)) {
-        riskPercentage += 30; 
-        reasons.push({ 
-          description: `Logistics API Alert: Fake Postal/ZIP Code sequence detected (${shippingZip}).`, 
-          sentiment: "NEGATIVE" 
-        });
+      // 2. Check Pincode/ZIP Code
+      if (shippingCountry === "IN" || shippingCountry === "India") {
+        if (!/^[1-9][0-9]{5}$/.test(cleanZip)) {
+          riskPercentage += 30; 
+          reasons.push({ 
+            description: `Logistics API Alert: Invalid Indian PIN Code format (${shippingZip}).`, 
+            sentiment: "NEGATIVE" 
+          });
+          console.log(`[Pincode DB]  Skipped DB check. Invalid format: ${cleanZip}`);
+        } else {
+          const validPin = await prisma.india_valid_pincodes.findUnique({
+            where: { postalCode: cleanZip }
+          });
+          
+          if (validPin) {
+            console.log(`[Pincode DB]  Match found for PIN: ${cleanZip}`);
+          } else {
+            console.log(`[Pincode DB]  No match found for PIN: ${cleanZip}`);
+            riskPercentage += 40; 
+            reasons.push({ 
+              description: `Logistics Geo-Alert: The postal code (${shippingZip}) does not exist in India. Highly suspicious.`,
+              sentiment: "NEGATIVE" 
+            });
+          }
+        }
+      } else {
+        // Fallback generic logic for non-Indian addresses
+        if (!cleanZip || cleanZip.length < 4) {
+          riskPercentage += 20; 
+          reasons.push({ 
+            description: `Logistics API Alert: Postal/ZIP Code is missing or incomplete.`, 
+            sentiment: "NEGATIVE" 
+          });
+        } else if (/^(0+|1+|12345\d*)$/.test(cleanZip)) {
+          riskPercentage += 30; 
+          reasons.push({ 
+            description: `Logistics API Alert: Fake Postal/ZIP Code sequence detected (${shippingZip}).`, 
+            sentiment: "NEGATIVE" 
+          });
+        }
       }
     }
   }
