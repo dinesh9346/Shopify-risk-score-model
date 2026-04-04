@@ -340,7 +340,6 @@ export async function buildHistoricalBuyerProfiles(shop) {
   console.log(`[BULK COMPLETE] Total Buyer Profiles Built: ${totalSaved}`);
 }
 
-
 /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */
 export async function updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid) {
   try {
@@ -392,6 +391,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     }
 
     // Now fetch their order history...
+    // CRITICAL UPDATE: We must include the related disputes from Phase 1
     const allCustomerOrders = await prisma.shopify_store_order.findMany({
       where: {
         shop,
@@ -402,16 +402,20 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
           { shopifyOrderId: `gid://shopify/Order/${orderGid}` },
           { shopifyOrderId: orderGid }
         ].filter(Boolean)
+      },
+      include: {
+        disputes: true // Pulls the related records from shopify_dispute
       }
     });
 
-    // ADDED: Scan past orders to extract the best available name
+    // Extract the best available name
     const orderWithName = allCustomerOrders.find(o => o.firstName || o.lastName);
     if (orderWithName) {
       safeFirstName = safeFirstName || orderWithName.firstName;
       safeLastName = safeLastName || orderWithName.lastName;
     }
 
+    // Initialize all counters, including the new dispute vectors
     let profile = {
       totalorders: allCustomerOrders.length,
       validOrderCount: 0,
@@ -422,6 +426,9 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       codCount: 0,
       unpaidCount: 0,
       disputeCount: 0,
+      fraudDisputeCount: 0, // NEW
+      wonDisputeCount: 0,   // NEW
+      lostDisputeCount: 0,  // NEW
       refundCount: 0,
     };
     
@@ -431,7 +438,32 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
       
       if (isCod) profile.codCount += 1;
-      if (o.hasDispute) profile.disputeCount += 1;
+      
+      // Fallback for legacy boolean check
+      if (o.hasDispute && (!o.disputes || o.disputes.length === 0)) {
+        profile.disputeCount += 1;
+      }
+
+      // NEW: Granular Dispute Tallying
+      if (o.disputes && o.disputes.length > 0) {
+        o.disputes.forEach(dispute => {
+          profile.disputeCount += 1; // Increment total known disputes
+
+          const reasonStr = (dispute.reason || "").toLowerCase();
+          const statusStr = (dispute.status || "").toLowerCase();
+
+          if (reasonStr === "fraudulent") {
+            profile.fraudDisputeCount += 1;
+          }
+
+          if (statusStr === "won") {
+            profile.wonDisputeCount += 1;
+          } else if (statusStr === "lost" || statusStr === "charge_refunded") {
+            // Shopify sometimes classifies a lost dispute simply as 'charge_refunded'
+            profile.lostDisputeCount += 1;
+          }
+        });
+      }
 
       // Logistics Tracking
       if (o.cancelledAt || fulfillment === "CANCELLED") {
@@ -442,7 +474,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
         profile.fulfilledCount += 1;
       }
       
-     if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
+      if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
       
       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") {
         profile.refundCount += 1;
@@ -464,19 +496,32 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       }
     });
 
-    // CALL THE HELPER FUNCTION HERE
+    // CALL THE HELPER FUNCTION HERE (Ensure your calculateRiskSegment is aware of these new fields if needed)
     const { segment, riskReasons } = calculateRiskSegment(profile);
 
-   
     await prisma.zippyy_buyer_profile.upsert({
       where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
       update: { 
-        ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
-        firstName: safeFirstName, lastName: safeLastName
+        ...profile, 
+        buyerSegment: segment, 
+        riskReasons: riskReasons, 
+        customerEmail: safeEmail, 
+        customerPhone: safePhone, 
+        customerId: safeCustId,
+        firstName: safeFirstName, 
+        lastName: safeLastName
       },
       create: { 
-        shop, buyerIdentifier, ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
-        firstName: safeFirstName, lastName: safeLastName
+        shop, 
+        buyerIdentifier, 
+        ...profile, 
+        buyerSegment: segment, 
+        riskReasons: riskReasons, 
+        customerEmail: safeEmail, 
+        customerPhone: safePhone, 
+        customerId: safeCustId,
+        firstName: safeFirstName, 
+        lastName: safeLastName
       }
     });
 
@@ -485,6 +530,151 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     console.error("[PROFILE UPDATER ERROR]:", error);
   }
 }
+
+// /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */
+// export async function updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid) {
+//   try {
+//     let safeEmail = customerEmail?.trim().toLowerCase() || null;
+//     let safePhone = customerPhone?.trim() || null;
+//     const safeCustId = customerId?.trim() || null;
+
+//     let safeFirstName = null;
+//     let safeLastName = null;
+
+//     // Default identifier if they are completely new
+//     let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
+
+//     // 1. Attempt to find an existing profile
+//     let existingProfile = null;
+
+//     // First, if we have customerId, check if a profile exists with buyerIdentifier = customerId
+//     if (safeCustId) {
+//       existingProfile = await prisma.zippyy_buyer_profile.findUnique({
+//         where: { shop_buyerIdentifier: { shop, buyerIdentifier: safeCustId } }
+//       });
+//       if (existingProfile) {
+//         buyerIdentifier = safeCustId;
+//       }
+//     }
+
+//     // If not found, search by other identifiers
+//     if (!existingProfile) {
+//       existingProfile = await prisma.zippyy_buyer_profile.findFirst({
+//         where: {
+//           shop,
+//           OR: [
+//             safeEmail ? { customerEmail: safeEmail } : undefined,
+//             safeCustId ? { customerId: safeCustId } : undefined,
+//             safePhone ? { customerPhone: safePhone } : undefined,
+//           ].filter(Boolean) // Cleans out any undefined rules
+//         }
+//       });
+//       if (existingProfile) {
+//         buyerIdentifier = existingProfile.buyerIdentifier;
+//       }
+//     }
+
+//     if (existingProfile) {
+//       safeEmail = safeEmail || existingProfile.customerEmail;
+//       safePhone = safePhone || existingProfile.customerPhone;
+//       safeFirstName = existingProfile.firstName || null;
+//       safeLastName = existingProfile.lastName || null;
+//     }
+
+//     // Now fetch their order history...
+//     const allCustomerOrders = await prisma.shopify_store_order.findMany({
+//       where: {
+//         shop,
+//         OR: [
+//           safeEmail ? { customerEmail: safeEmail } : undefined,
+//           safeCustId ? { customerId: safeCustId } : undefined,
+//           safePhone ? { customerPhone: safePhone } : undefined,
+//           { shopifyOrderId: `gid://shopify/Order/${orderGid}` },
+//           { shopifyOrderId: orderGid }
+//         ].filter(Boolean)
+//       }
+//     });
+
+//     // ADDED: Scan past orders to extract the best available name
+//     const orderWithName = allCustomerOrders.find(o => o.firstName || o.lastName);
+//     if (orderWithName) {
+//       safeFirstName = safeFirstName || orderWithName.firstName;
+//       safeLastName = safeLastName || orderWithName.lastName;
+//     }
+
+//     let profile = {
+//       totalorders: allCustomerOrders.length,
+//       validOrderCount: 0,
+//       totalSpend: 0,
+//       fulfilledCount: 0,
+//       cancelledCount: 0,
+//       rtoCount: 0,
+//       codCount: 0,
+//       unpaidCount: 0,
+//       disputeCount: 0,
+//       refundCount: 0,
+//     };
+    
+//     allCustomerOrders.forEach(o => {
+//       const fStatus = o.financialStatus?.toUpperCase();
+//       const fulfillment = o.fulfillmentStatus?.toUpperCase();
+//       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
+      
+//       if (isCod) profile.codCount += 1;
+//       if (o.hasDispute) profile.disputeCount += 1;
+
+//       // Logistics Tracking
+//       if (o.cancelledAt || fulfillment === "CANCELLED") {
+//         profile.cancelledCount += 1;
+//       } else if (o.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
+//         profile.rtoCount += 1;
+//       } else if (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") {
+//         profile.fulfilledCount += 1;
+//       }
+      
+//      if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
+      
+//       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") {
+//         profile.refundCount += 1;
+//       }
+
+//       // --- NET REVENUE GATEKEEPER ---
+//       const isEligibleForRevenue = (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && 
+//                                    (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") && 
+//                                    !o.hasDispute && 
+//                                    !o.cancelledAt && 
+//                                    !o.isRTO;
+
+//       if (isEligibleForRevenue) {
+//         profile.validOrderCount += 1;
+//         const grossValue = Number(o.orderValue || 0);
+//         const refundedAmount = Number(o.totalRefundedAmount || 0); 
+//         const netValue = grossValue - refundedAmount;
+//         profile.totalSpend += netValue;
+//       }
+//     });
+
+//     // CALL THE HELPER FUNCTION HERE
+//     const { segment, riskReasons } = calculateRiskSegment(profile);
+
+   
+//     await prisma.zippyy_buyer_profile.upsert({
+//       where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
+//       update: { 
+//         ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
+//         firstName: safeFirstName, lastName: safeLastName
+//       },
+//       create: { 
+//         shop, buyerIdentifier, ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
+//         firstName: safeFirstName, lastName: safeLastName
+//       }
+//     });
+
+//     console.log(` [PROFILE UPDATER] Successfully updated profile for ${buyerIdentifier}`);
+//   } catch (error) {
+//     console.error("[PROFILE UPDATER ERROR]:", error);
+//   }
+// }
 
 /* ================= 1. HELPER: SEGMENTATION BRAIN (DRY) ================= */
 export function calculateRiskSegment(profile) {

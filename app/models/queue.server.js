@@ -7,6 +7,7 @@ import { processOrderUpdate } from "./orderUpdate.server.js";
 import {syncCustomerProfile}  from "./orderUpdate.server.js";
 import { pushRiskToShopify } from "./pushRiskScore.server.js";
 import { processFulfillmentUpdate } from "./fulfillmentUpdate.server.js";
+import { processDisputeUpdate } from "./disputeUpdate.server.js";
 const QUEUE_URL = process.env.SQS_QUEUE_URL || "https://sqs.us-west-1.amazonaws.com/571109166839/apac-shopify-data-collection-queue-dev.fifo";
 
 const sqsClient = new SQSClient({
@@ -115,7 +116,7 @@ async function processDatabaseLogic(topic, shop, payload) {
     case "DISPUTES_CREATE":
     case "DISPUTES_UPDATE":
       console.log(`[SQS ROUTER] Routing to Dispute Update logic for ${shop}`);
-      await processDisputeUpdate(shop, payload);
+      await processDisputeUpdate(topic,shop, payload);
       break;
 
     case 'BULK_OPERATIONS_FINISH':
