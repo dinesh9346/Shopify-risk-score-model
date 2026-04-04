@@ -73,9 +73,9 @@ model shopify_store_order {
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-
   riskScore         zippyy_risk_score?
-
+  // RELATIONS to dispute table 
+  disputes          shopify_dispute[]
   //  foreign key to the Buyer Profile
   buyerProfileId    String?
   buyerProfile      zippyy_buyer_profile? @relation(fields: [buyerProfileId], references: [id], onDelete: SetNull)
@@ -137,9 +137,13 @@ model zippyy_buyer_profile {
   rtoCount              Int      @default(0)
   codCount              Int      @default(0)
   unpaidCount           Int      @default(0)
+   
+  // NEW: Granular Dispute Stats for the Risk Engine
   disputeCount          Int      @default(0)
   refundCount           Int      @default(0)
-
+  fraudDisputeCount Int      @default(0) // Disputes categorized specifically as 'fraudulent'
+  lostDisputeCount  Int      @default(0) // Disputes where the merchant lost the money
+  wonDisputeCount   Int      @default(0) // Disputes where the merchant won the case
   // Computed Risk Data
   buyerSegment          String   @default("New") // VIP, Repeat Buyer, New, High Risk
   riskReasons           String?  
@@ -197,6 +201,8 @@ model zippyy_risk_settings {
   hoardingMedPenalty    Int      @default(15)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+  openDisputePenalty    Int      @default(40)  // Penalty if they try to buy while a dispute is pending
+  fraudHistoryPenalty   Int      @default(100) // Immediate rejection if past 'fraudulent' reason code exists
   @@schema("risk_score_model")
 }
 
@@ -212,7 +218,31 @@ model India_valid_pincodes {
   @@schema("risk_score_model")
 }
 
+model shopify_dispute {
+  id                  String   @id @default(cuid())
+  shop                String
+  shopifyDisputeId    String   // The ID provided by Shopify's webhook
+  
+  orderId             String
+  order               shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  status              String   // e.g., 'needs_response', 'under_review', 'charge_refunded', 'won', 'lost'
+  reason              String   // e.g., 'fraudulent', 'product_not_received', 'product_unacceptable', 'unrecognized'
+  
+  amount              Decimal  @db.Decimal(10,2)
+  currency            String   @default("USD")
+  
+  evidenceDueBy       DateTime? // Crucial for dashboard alerts
+  hasSubmittedEvidence Boolean  @default(false)
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([shop, shopifyDisputeId])
+  @@index([shop, orderId])
+  @@index([shop, status]) // Speeds up dashboard queries for "Action Required" disputes
+  @@schema("risk_score_model")
+}
 
 
 
