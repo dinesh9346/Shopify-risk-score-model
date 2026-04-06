@@ -329,7 +329,7 @@ export default function Index() {
   
   // CSV Export Logic
   const exportToCSV = () => {
-    if (!profiles || profiles.length === 0) return;
+    if (!filteredProfiles || filteredProfiles.length === 0) return;
 
     const headers = [
       "Customer Name",
@@ -344,7 +344,7 @@ export default function Index() {
 
     const csvRows = [headers.join(",")];
 
-    profiles.forEach((profile) => {
+    filteredProfiles.forEach((profile) => {
       const row = [
         `"${(profile.displayName || "").replace(/"/g, '""')}"`,
         `"${(profile.customerEmail || "").replace(/"/g, '""')}"`,
@@ -392,27 +392,27 @@ export default function Index() {
   };
 
   // Helper to get styled badge text ONLY for the bottom key segments
-  const getBadgeText = (text, type = "general") => {
-    let style = { 
-      padding: '4px 8px', 
-      borderRadius: '4px', 
-      fontWeight: 'bold', 
-      color: 'white', 
-      textTransform: 'uppercase',
-      fontSize: '0.8rem',
-      display: 'inline-block'
-    };
+  // const getBadgeText = (text, type = "general") => {
+  //   let style = { 
+  //     padding: '4px 8px', 
+  //     borderRadius: '4px', 
+  //     fontWeight: 'bold', 
+  //     color: 'white', 
+  //     textTransform: 'uppercase',
+  //     fontSize: '0.8rem',
+  //     display: 'inline-block'
+  //   };
 
-    switch(type) {
-      case 'critical': style.backgroundColor = '#d32f2f'; break; 
-      case 'success': style.backgroundColor = '#2e7d32'; break; 
-      case 'warning': style.backgroundColor = '#f57c00'; color: '#333'; break; 
-      case 'info': style.backgroundColor = '#1976d2'; break; 
-      default: style.backgroundColor = '#e0e0e0'; color: '#333'; break; 
-    }
+  //   switch(type) {
+  //     case 'critical': style.backgroundColor = '#d32f2f'; break; 
+  //     case 'success': style.backgroundColor = '#2e7d32'; break; 
+  //     case 'warning': style.backgroundColor = '#f57c00'; color: '#333'; break; 
+  //     case 'info': style.backgroundColor = '#1976d2'; break; 
+  //     default: style.backgroundColor = '#e0e0e0'; color: '#333'; break; 
+  //   }
 
-    return <span style={style}>{text}</span>;
-  };
+  //   return <span style={style}>{text}</span>;
+  // };
 
   const getSegmentBadge = (segment) => {
     switch (segment) {
@@ -521,14 +521,36 @@ export default function Index() {
     return <Badge>Processing</Badge>;
   };
 
+  // Filter profiles for disputed tab
+  const filteredProfiles = useMemo(() => {
+    if (currentTabId === "disputed") {
+      return profiles.filter(profile => {
+        // Check if this profile has any disputed orders
+        return profile.orderHistory && profile.orderHistory.some(order => 
+          order.hasDispute || (order.disputes && order.disputes.length > 0)
+        );
+      });
+    }
+    return profiles;
+  }, [profiles, currentTabId]);
+
+  // Calculate disputed customers count
+  const disputedCount = useMemo(() => {
+    return profiles.filter(profile => 
+      profile.orderHistory && profile.orderHistory.some(order => 
+        order.hasDispute || (order.disputes && order.disputes.length > 0)
+      )
+    ).length;
+  }, [profiles]);
+
   const tabs = [
     { id: "all", content: "All Customers" },
-    { id: "risk", content: "High Risk", badge: dashboardStats?.highRiskCount > 0 ? dashboardStats.highRiskCount.toString() : undefined },
-    { id: "watchlist", content: "Watchlist" }, 
-    { id: "vip", content: "VIPs" },
-    { id: "repeat", content: "Repeat Buyers" },
-    { id: "new", content: "New" },
-    { id: "disputed", content: "Disputed" },
+    { id: "risk", content: "High Risk", badge: dashboardStats?.segmentCounts?.["High Risk"] > 0 ? dashboardStats.segmentCounts["High Risk"].toString() : undefined },
+    { id: "watchlist", content: "Watchlist", badge: dashboardStats?.segmentCounts?.["Watchlist"] > 0 ? dashboardStats.segmentCounts["Watchlist"].toString() : undefined }, 
+    { id: "vip", content: "VIPs", badge: dashboardStats?.segmentCounts?.["VIP"] > 0 ? dashboardStats.segmentCounts["VIP"].toString() : undefined },
+    { id: "repeat", content: "Repeat Buyers", badge: dashboardStats?.segmentCounts?.["Repeat Buyer"] > 0 ? dashboardStats.segmentCounts["Repeat Buyer"].toString() : undefined },
+    { id: "new", content: "New", badge: dashboardStats?.segmentCounts?.["New"] > 0 ? dashboardStats.segmentCounts["New"].toString() : undefined },
+    { id: "disputed", content: "Disputed", badge: disputedCount > 0 ? disputedCount.toString() : undefined },
   ];
   
   const selectedTab = Math.max(0, tabs.findIndex(t => t.id === currentTabId));
@@ -545,11 +567,11 @@ export default function Index() {
     { id: "disputed", content: "Disputed" }, // <-- ADDED THIS LINE
   ];
 
-  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(profiles);
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(filteredProfiles);
 
   // Memoize the row markup for performance
   const rowMarkup = useMemo(() => {
-    return profiles.map((profile, index) => {
+    return filteredProfiles.map((profile, index) => {
       return (
         <IndexTable.Row
           id={profile.id}
@@ -592,9 +614,9 @@ export default function Index() {
         </IndexTable.Row>
       );
     });
-  }, [profiles, selectedResources]);
+  }, [filteredProfiles, selectedResources]);
 
-  if (!profiles || profiles.length === 0) {
+  if (!filteredProfiles || filteredProfiles.length === 0) {
     if (currentTabId === "all" && !currentSearch) {
       return (
         <Page title="Customer Directory">
@@ -610,6 +632,21 @@ export default function Index() {
         </Page>
       );
     }
+
+    // Show "No customers found" for other tabs when filtered
+    return (
+      <Page title="Customer Directory">
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <EmptyState heading="No customers found">
+                <p>Try changing your search query or selecting a different segment tab.</p>
+              </EmptyState>
+            </Card>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
   }
   // FULL PAGE DETAIL VIEW
   if (selectedProfile) {
@@ -928,10 +965,10 @@ export default function Index() {
         <Divider />
 
         <Scrollable style={{ height: "calc(100vh - 280px)", minHeight: "500px" }} focusable>
-          {profiles.length > 0 ? (
+          {filteredProfiles.length > 0 ? (
             <IndexTable
               resourceName={{ singular: "customer", plural: "customers" }}
-              itemCount={profiles.length}
+              itemCount={filteredProfiles.length}
               selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
               onSelectionChange={handleSelectionChange}
               headings={[
@@ -954,8 +991,8 @@ export default function Index() {
           )}
         </Scrollable>
 
-        {/* Bottom Key Segments Section */}
-        {currentTabId === 'all' && (
+        {/* Bottom Key Segments Section - REMOVED */}
+        {/* {currentTabId === 'all' && (
           <Box padding="400" paddingBlockStart="500">
             <Divider />
             <Box paddingBlockStart="400">
@@ -982,7 +1019,7 @@ export default function Index() {
               </BlockStack>
             </Box>
           </Box>
-        )}
+        )} */}
       </Box>
     </Page>
   );

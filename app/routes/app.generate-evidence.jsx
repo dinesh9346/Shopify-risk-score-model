@@ -119,8 +119,44 @@ export default function GenerateEvidencePDF() {
       <style>{`
         @media print {
           .no-print { display: none !important; }
-          body { background: #fff; }
+          body { background: #fff; margin: 0; }
           @page { margin: 1in; }
+          
+          /* PAGE BREAK CONTROLS */
+          .page-break-before { page-break-before: always; }
+          .page-break-after { page-break-after: always; }
+          .page-break-inside-avoid { page-break-inside: avoid; }
+          .page-break-inside-avoid-table { page-break-inside: avoid; }
+          
+          /* Prevent tables from breaking across pages */
+          table { page-break-inside: avoid; }
+          
+          /* Prevent address correlation boxes from breaking */
+          .address-correlation-box { page-break-inside: avoid; }
+          
+          /* Prevent critical callouts from breaking */
+          .critical-callout, .warning-callout { page-break-inside: avoid; }
+          
+          /* Ensure sections start on new pages if needed */
+          h2 { page-break-after: avoid; }
+          
+          /* Keep headers with their content */
+          h1, h2 { page-break-after: avoid; }
+          
+          /* Prevent the AVS box from being cut off */
+          .avs-verified-section { page-break-inside: avoid; }
+          
+          /* Improve table border visibility */
+          table, th, td { border: 1px solid #000 !important; }
+          
+          /* Ensure boxes have consistent spacing */
+          .address-correlation-box, .critical-callout, .warning-callout {
+            margin: 20px 0;
+            padding: 12px;
+          }
+          
+          /* Prevent widows and orphans */
+          p { orphans: 3; widows: 3; }
         }
         h2 { 
           border-bottom: 2px solid #000; 
@@ -209,14 +245,14 @@ export default function GenerateEvidencePDF() {
 
       {/* --- CE 3.0 / VELOCITY ALERT HEADERS (Conditional) --- */}
       {safePayload.friendlyFraudProof?.visaCE3Qualified && (
-        <div style={{ border: "2px solid #000", padding: "10px", marginBottom: "20px", fontWeight: "bold", textAlign: "center" }}>
+        <div className="critical-callout page-break-inside-avoid" style={{ border: "2px solid #000", padding: "10px", marginBottom: "20px", fontWeight: "bold", textAlign: "center" }}>
           *** VISA COMPELLING EVIDENCE 3.0 COMPLIANT *** <br/>
           This customer has a documented history of {safePayload.friendlyFraudProof?.ce3EligibleOrders?.length || 0} undisputed, settled transactions utilizing matching identity elements. A liability shift is mandated.
         </div>
       )}
 
       {safePayload.friendlyFraudProof?.velocityAbuseDetected && (
-        <div style={{ border: "2px dashed #000", padding: "10px", marginBottom: "20px", fontWeight: "bold" }}>
+        <div className="warning-callout page-break-inside-avoid" style={{ border: "2px dashed #000", padding: "10px", marginBottom: "20px", fontWeight: "bold" }}>
           INVESTIGATOR ALERT: First-Party Fraud / Hoarding Behavior Detected.<br/>
           This cardholder executed {safePayload.friendlyFraudProof?.velocityOrderCount48hr || 0} high-value transactions within a 48-hour window, indicating coordinated velocity abuse.
         </div>
@@ -229,7 +265,7 @@ export default function GenerateEvidencePDF() {
       </p>
 
       {/* Visual Address Correlation Callout */}
-      <div className="address-correlation-box">
+      <div className="address-correlation-box avs-verified-section">
         <strong>AVS-VERIFIED BILLING ADDRESS (Checkout Authentication):</strong>
         <div style={{ marginTop: "8px", fontFamily: "monospace", fontSize: "11pt", marginBottom: "15px" }}>
           {safePayload.targetedOrderDetails?.billingAddress || "Unknown"}
@@ -250,7 +286,7 @@ export default function GenerateEvidencePDF() {
         </span>
       </div>
 
-      <table>
+      <table className="page-break-inside-avoid-table">
         <tbody>
           <tr><th>Order ID</th><td><strong>{safePayload.targetedOrderDetails?.orderId || "Unknown"}</strong></td></tr>
           <tr><th>Date Placed</th><td>{formatDate(safePayload.targetedOrderDetails?.datePlaced)}</td></tr>
@@ -263,7 +299,7 @@ export default function GenerateEvidencePDF() {
 
       {/* --- SECTION 2: TARGETED TRANSACTION (Original) --- */}
       <h2>2. Disputed Transaction Details</h2>
-      <table>
+      <table className="page-break-inside-avoid-table">
         <tbody>
           <tr><th>Order ID</th><td>{safePayload.targetedOrderDetails?.orderId || "Unknown"}</td></tr>
           <tr><th>Date Placed</th><td>{formatDate(safePayload.targetedOrderDetails?.datePlaced)}</td></tr>
@@ -273,7 +309,7 @@ export default function GenerateEvidencePDF() {
 
       {/* --- SECTION 3: AUTHORIZATION --- */}
       <h2>3. Cryptographic & Identity Authorization</h2>
-      <table>
+      <table className="page-break-inside-avoid-table">
         <tbody>
           <tr><th>Purchasing IP Address</th><td>{safePayload.cryptographicAuthorization?.customerIP || "Not captured"}</td></tr>
           <tr><th>Payment Gateway</th><td>{safePayload.cryptographicAuthorization?.paymentGateway || "Unknown"}</td></tr>
@@ -283,7 +319,7 @@ export default function GenerateEvidencePDF() {
 
       {/* --- SECTION 4: FULFILLMENT --- */}
       <h2>4. Fulfillment & Logistics Proof</h2>
-      <table>
+      <table className="page-break-inside-avoid-table">
         <tbody>
           <tr><th>Carrier</th><td>{safePayload.fulfillmentProof?.carrier || "Unknown"}</td></tr>
           <tr><th>Tracking Number</th><td><strong>{safePayload.fulfillmentProof?.trackingNumber || "Untracked"}</strong></td></tr>
@@ -296,7 +332,7 @@ export default function GenerateEvidencePDF() {
       <p>
         Unlike a standard transaction, our systems track longitudinal buyer behavior. The data below proves the cardholder's historical interaction with our business prior to this dispute.
       </p>
-      <table>
+      <table className="page-break-inside-avoid-table">
         <tbody>
           <tr><th>Account Status</th><td>{safePayload.buyerBehavioralAnalysis?.buyerSegment || "Standard"}</td></tr>
           <tr><th>Total Lifetime Orders</th><td>{safePayload.buyerBehavioralAnalysis?.totalLifetimeOrders || 1}</td></tr>
@@ -311,7 +347,7 @@ export default function GenerateEvidencePDF() {
           <p>
             The cardholder has successfully received the following past orders without initiating a dispute, proving familiarity and consent with our fulfillment process.
           </p>
-          <table>
+          <table className="page-break-inside-avoid-table">
             <thead>
               <tr>
                 <th style={{width: "50%"}}>Date Placed</th>
