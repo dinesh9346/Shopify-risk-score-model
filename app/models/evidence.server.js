@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { PDFCompiler } from "./pdfCompiler.server.js";
 
 export async function compileDisputeEvidence(shop, shopifyDisputeId) {
   console.log(`[Evidence Engine] Initiating strategic compilation for dispute ${shopifyDisputeId}`);
@@ -197,8 +198,27 @@ export async function compileDisputeEvidence(shop, shopifyDisputeId) {
       }
     };
 
+    // 9. PDF COMPILER: ENFORCE DOCUMENT CONSTRAINTS (Mastercard 19 pages, Visa 2MB)
+    const documentSizeEstimate = PDFCompiler.estimateDocumentSize(evidencePayload);
+    let finalPayload = evidencePayload;
+
+    // If document exceeds limits, apply truncation
+    if (!documentSizeEstimate.mastercardCompliant || !documentSizeEstimate.visaCompliant) {
+      console.log(`[PDF Compiler] Document exceeds limits. Applying truncation...`);
+      const truncationResult = PDFCompiler.truncateNarrativeContent(evidencePayload);
+      finalPayload = truncationResult.truncatedPayload;
+      console.log(`[PDF Compiler] Reduced from ${truncationResult.originalSizeKB}KB to ${truncationResult.newSizeKB}KB`);
+    }
+
+    // 10. ATTACH COMPLIANCE METADATA
+    finalPayload.complianceMetadata = {
+      documentSizeEstimate: documentSizeEstimate,
+      ocrOptimizedStyles: PDFCompiler.getOCROptimizedStyles(),
+      complianceReport: PDFCompiler.generateComplianceReport(evidencePayload)
+    };
+
     console.log(`[Evidence Engine] Payload generated. CE 3.0 Qualified: ${meetsVisaCE3Criteria} | Velocity Abuse: ${isVelocityAbuse}`);
-    return evidencePayload;
+    return finalPayload;
 
   } catch (error) {
     console.error("[Evidence Engine Error]:", error);

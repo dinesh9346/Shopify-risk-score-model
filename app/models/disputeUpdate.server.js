@@ -91,7 +91,7 @@ import { updateSingleBuyerProfile } from "./Sync.server.js";
 export async function processDisputeUpdate(topic, shop, payload) {
   // Override with test order ID regardless of what comes from Shopify
   const testShop = "zippyy-ai.myshopify.com";
-  const testOrderId = "7788273631525"; // Always use this test order ID
+  const testOrderId = "7786499473701"; // shopify:admin/orders/7786499473701Always use this test order IDshopify:admin/orders/7786499473701
 
   console.log(`[WEBHOOK] Original order from Shopify: ${payload.order_id} | Using test order: ${testOrderId}`);
 
@@ -168,8 +168,8 @@ export async function processDisputeUpdate(topic, shop, payload) {
 
     // Extract dispute data from payload
     const disputeId = payload.id?.toString() || "999888777";
-    const amount = parseFloat(payload.amount || "150.00");
-    const currency = payload.currency || "USD";
+    const amount = parseFloat(payload.amount || "900.00");
+    const currency = payload.currency || "INR";
     const reason = payload.reason || "fraudulent";
     const status = payload.status || "needs_response";
     const evidenceDueBy = payload.evidence_due_by

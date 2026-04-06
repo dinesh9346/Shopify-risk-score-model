@@ -68,6 +68,7 @@ export default function GenerateEvidencePDF() {
     cryptographicAuthorization: evidencePayload.cryptographicAuthorization || {},
     fulfillmentProof: evidencePayload.fulfillmentProof || {},
     buyerBehavioralAnalysis: evidencePayload.buyerBehavioralAnalysis || {},
+    complianceMetadata: evidencePayload.complianceMetadata || {}
   };
 
   // Helper to safely format dates
@@ -121,10 +122,71 @@ export default function GenerateEvidencePDF() {
           body { background: #fff; }
           @page { margin: 1in; }
         }
-        h2 { border-bottom: 1px solid #000; padding-bottom: 5px; margin-top: 30px; font-size: 14pt; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { border: 1px solid #000; padding: 8px; text-align: left; vertical-align: top; }
-        th { background-color: #f0f0f0; width: 40%; }
+        h2 { 
+          border-bottom: 2px solid #000; 
+          padding-bottom: 5px; 
+          margin-top: 30px; 
+          font-size: 13pt;
+          font-weight: bold;
+        }
+        h1 {
+          font-weight: bold;
+          font-size: 16pt;
+        }
+        table { 
+          width: 100%; 
+          border-collapse: collapse; 
+          margin-top: 15px; 
+          border: 1px solid #000;
+        }
+        th, td { 
+          border: 1px solid #000; 
+          padding: 8px; 
+          text-align: left; 
+          vertical-align: top;
+          font-size: 12pt;
+        }
+        th { 
+          background-color: #f0f0f0; 
+          width: 40%;
+          font-weight: bold;
+        }
+        /* Critical callout - black border, bold text, no color */
+        .critical-callout {
+          border: 3px solid #000;
+          padding: 12px;
+          margin: 20px 0;
+          font-weight: bold;
+          background-color: #fff;
+          font-size: 12pt;
+        }
+        /* Warning callout - dashed border, bold text */
+        .warning-callout {
+          border: 2px dashed #000;
+          padding: 10px;
+          margin: 20px 0;
+          font-weight: bold;
+          background-color: #fff;
+          font-size: 12pt;
+        }
+        /* Address correlation callout */
+        .address-correlation-box {
+          border: 2px solid #000;
+          padding: 12px;
+          margin: 15px 0;
+          background-color: #fff;
+          font-weight: bold;
+          font-size: 12pt;
+        }
+        /* Ensure all text is black on white - no color highlighting */
+        .no-color-text {
+          color: #000;
+          background-color: #fff;
+        }
+        strong {
+          font-weight: bold;
+          color: #000;
+        }
       `}</style>
 
       {/* --- THE BANK REBUTTAL COVER LETTER --- */}
@@ -160,21 +222,57 @@ export default function GenerateEvidencePDF() {
         </div>
       )}
 
-      {/* --- SECTION 1: TARGETED TRANSACTION --- */}
-      <h2>1. Disputed Transaction Details</h2>
+      {/* --- SECTION 1: EXPLICIT ADDRESS CORRELATION (Proof of Delivery Match) --- */}
+      <h2>1. Address Verification & Proof of Delivery Correlation</h2>
+      <p>
+        <strong>CRITICAL EVIDENCE:</strong> The following documentation proves that the delivery address matches the AVS-verified billing address provided at checkout, establishing confident proof of delivery to the authorized cardholder.
+      </p>
+
+      {/* Visual Address Correlation Callout */}
+      <div className="address-correlation-box">
+        <strong>AVS-VERIFIED BILLING ADDRESS (Checkout Authentication):</strong>
+        <div style={{ marginTop: "8px", fontFamily: "monospace", fontSize: "11pt", marginBottom: "15px" }}>
+          {safePayload.targetedOrderDetails?.billingAddress || "Unknown"}
+        </div>
+
+        <strong>↓ MATCHES ↓</strong>
+
+        <div style={{ marginTop: "8px", fontFamily: "monospace", fontSize: "11pt", marginBottom: "15px" }}>
+          <strong>CONFIRMED DELIVERY ADDRESS (Carrier Tracking):</strong><br/>
+          {safePayload.targetedOrderDetails?.shippingAddress || "Unknown"}
+        </div>
+
+        <strong>CORRELATION STATUS:</strong><br/>
+        <span style={{ fontSize: "13pt", fontWeight: "bold" }}>
+          {safePayload.targetedOrderDetails?.isBillingShippingMatch === "TRUE - Perfect Match" 
+            ? "✓ EXACT MATCH CONFIRMED - Delivery to Authorized Cardholder Address"
+            : "⚠️ Addresses differ - See detailed analysis below"}
+        </span>
+      </div>
+
+      <table>
+        <tbody>
+          <tr><th>Order ID</th><td><strong>{safePayload.targetedOrderDetails?.orderId || "Unknown"}</strong></td></tr>
+          <tr><th>Date Placed</th><td>{formatDate(safePayload.targetedOrderDetails?.datePlaced)}</td></tr>
+          <tr><th>Total Value</th><td><strong>{safePayload.targetedOrderDetails?.totalValue || "Unknown"}</strong></td></tr>
+          <tr><th>AVS Billing Address</th><td>{safePayload.targetedOrderDetails?.billingAddress || "Unknown"}</td></tr>
+          <tr><th>Carrier Delivery Address</th><td>{safePayload.targetedOrderDetails?.shippingAddress || "Unknown"}</td></tr>
+          <tr><th>Address Match Confirmation</th><td><strong>{safePayload.targetedOrderDetails?.isBillingShippingMatch || "Unknown"}</strong></td></tr>
+        </tbody>
+      </table>
+
+      {/* --- SECTION 2: TARGETED TRANSACTION (Original) --- */}
+      <h2>2. Disputed Transaction Details</h2>
       <table>
         <tbody>
           <tr><th>Order ID</th><td>{safePayload.targetedOrderDetails?.orderId || "Unknown"}</td></tr>
           <tr><th>Date Placed</th><td>{formatDate(safePayload.targetedOrderDetails?.datePlaced)}</td></tr>
           <tr><th>Total Value</th><td>{safePayload.targetedOrderDetails?.totalValue || "Unknown"}</td></tr>
-          <tr><th>Billing Address</th><td>{safePayload.targetedOrderDetails?.billingAddress || "Unknown"}</td></tr>
-          <tr><th>Shipping Address</th><td>{safePayload.targetedOrderDetails?.shippingAddress || "Unknown"}</td></tr>
-          <tr><th>Address Correlation</th><td><strong>{safePayload.targetedOrderDetails?.isBillingShippingMatch || "Unknown"}</strong></td></tr>
         </tbody>
       </table>
 
-      {/* --- SECTION 2: AUTHORIZATION --- */}
-      <h2>2. Cryptographic & Identity Authorization</h2>
+      {/* --- SECTION 3: AUTHORIZATION --- */}
+      <h2>3. Cryptographic & Identity Authorization</h2>
       <table>
         <tbody>
           <tr><th>Purchasing IP Address</th><td>{safePayload.cryptographicAuthorization?.customerIP || "Not captured"}</td></tr>
@@ -183,8 +281,8 @@ export default function GenerateEvidencePDF() {
         </tbody>
       </table>
 
-      {/* --- SECTION 3: FULFILLMENT --- */}
-      <h2>3. Fulfillment & Logistics Proof</h2>
+      {/* --- SECTION 4: FULFILLMENT --- */}
+      <h2>4. Fulfillment & Logistics Proof</h2>
       <table>
         <tbody>
           <tr><th>Carrier</th><td>{safePayload.fulfillmentProof?.carrier || "Unknown"}</td></tr>
@@ -193,8 +291,8 @@ export default function GenerateEvidencePDF() {
         </tbody>
       </table>
 
-      {/* --- SECTION 4: HISTORICAL BUYER PROFILE (Your Secret Weapon) --- */}
-      <h2>4. Longitudinal Cardholder Behavioral Analysis</h2>
+      {/* --- SECTION 5: HISTORICAL BUYER PROFILE (Your Secret Weapon) --- */}
+      <h2>5. Longitudinal Cardholder Behavioral Analysis</h2>
       <p>
         Unlike a standard transaction, our systems track longitudinal buyer behavior. The data below proves the cardholder's historical interaction with our business prior to this dispute.
       </p>
@@ -206,10 +304,10 @@ export default function GenerateEvidencePDF() {
         </tbody>
       </table>
 
-      {/* --- SECTION 5: PAST SUCCESSFUL DELIVERIES --- */}
+      {/* --- SECTION 6: PAST SUCCESSFUL DELIVERIES --- */}
       {(safePayload.friendlyFraudProof?.allPastSuccessfulDeliveries?.length || 0) > 0 && (
         <>
-          <h2>5. Prior Successful Deliveries to Cardholder</h2>
+          <h2>6. Prior Successful Deliveries to Cardholder</h2>
           <p>
             The cardholder has successfully received the following past orders without initiating a dispute, proving familiarity and consent with our fulfillment process.
           </p>

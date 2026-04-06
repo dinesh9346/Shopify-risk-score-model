@@ -94,9 +94,30 @@ export async function syncCustomerProfile(shop, customerPayload) {
     const address1 = defaultAddress.address1 || null;
     const country = defaultAddress.country || null;
 
+    // Determine buyerIdentifier consistently with other parts of the system
+    // Prioritize: customerId > email > phone > fallback
+    let buyerIdentifier = customerId;
+    
+    // Check if a profile already exists with any of this customer's identifiers
+    const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
+      where: {
+        shop,
+        OR: [
+          { buyerIdentifier: customerId },
+          { customerId: customerId },
+          email ? { customerEmail: email } : undefined,
+          phone ? { customerPhone: phone } : undefined,
+        ].filter(Boolean)
+      }
+    });
+    
+    if (existingProfile) {
+      buyerIdentifier = existingProfile.buyerIdentifier;
+    }
+
     // Upsert into Prisma using the new table name: zippyy_buyer_profile
     const profile = await prisma.zippyy_buyer_profile.upsert({
-      where: { shop_buyerIdentifier: { shop, buyerIdentifier: customerId } }, 
+      where: { shop_buyerIdentifier: { shop, buyerIdentifier } }, 
       update: {
         customerEmail: email,
         firstName: firstName,
@@ -113,7 +134,7 @@ export async function syncCustomerProfile(shop, customerPayload) {
       },
       create: {
         shop: shop,
-        buyerIdentifier: customerId, 
+        buyerIdentifier: buyerIdentifier, 
         customerId: customerId,
         customerEmail: email,
         firstName: firstName,

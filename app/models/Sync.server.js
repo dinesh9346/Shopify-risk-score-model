@@ -350,34 +350,31 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     let safeFirstName = null;
     let safeLastName = null;
 
-    // Default identifier if they are completely new
+    // Use the same buyerIdentifier logic as bulk sync for consistency
+    // Prioritize: existing linked identifiers > customerId > email > phone > guest
+    const existingKeys = new Set();
+    
+    // Check if we have existing mappings for this customer's identifiers
+    // (In single update, we don't have the full key maps, so we'll search the database)
+    
     let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
 
-    // 1. Attempt to find an existing profile
+    // 1. Attempt to find an existing profile by any identifier
     let existingProfile = null;
 
-    // First, if we have customerId, check if a profile exists with buyerIdentifier = customerId
-    if (safeCustId) {
-      existingProfile = await prisma.zippyy_buyer_profile.findUnique({
-        where: { shop_buyerIdentifier: { shop, buyerIdentifier: safeCustId } }
-      });
-      if (existingProfile) {
-        buyerIdentifier = safeCustId;
-      }
-    }
-
-    // If not found, search by other identifiers
-    if (!existingProfile) {
+    if (safeCustId || safeEmail || safePhone) {
       existingProfile = await prisma.zippyy_buyer_profile.findFirst({
         where: {
           shop,
           OR: [
-            safeEmail ? { customerEmail: safeEmail } : undefined,
+            safeCustId ? { buyerIdentifier: safeCustId } : undefined,
             safeCustId ? { customerId: safeCustId } : undefined,
+            safeEmail ? { customerEmail: safeEmail } : undefined,
             safePhone ? { customerPhone: safePhone } : undefined,
-          ].filter(Boolean) // Cleans out any undefined rules
+          ].filter(Boolean)
         }
       });
+      
       if (existingProfile) {
         buyerIdentifier = existingProfile.buyerIdentifier;
       }

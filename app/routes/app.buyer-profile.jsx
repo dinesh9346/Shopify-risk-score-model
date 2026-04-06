@@ -99,13 +99,13 @@ export const loader = async ({ request }) => {
     if (group.buyerSegment) segmentCounts[group.buyerSegment] = group._count.buyerSegment;
   });
 
-  // Deduplicate profiles by customer identifier to avoid displaying the same customer multiple times
+  // Deduplicate profiles by buyerIdentifier to avoid displaying the same customer multiple times
   const uniqueProfiles = [];
-  const seenCustomers = new Set();
+  const seenIdentifiers = new Set();
   for (const p of profilesData) {
-    const key = p.customerId || p.customerEmail || p.customerPhone || p.id;
-    if (!seenCustomers.has(key)) {
-      seenCustomers.add(key);
+    const key = p.buyerIdentifier;
+    if (!seenIdentifiers.has(key)) {
+      seenIdentifiers.add(key);
       uniqueProfiles.push(p);
     }
   }
@@ -135,7 +135,7 @@ export const loader = async ({ request }) => {
     select: {
       id: true, shopifyOrderId: true, carrier: true, trackingNumber: true,
       trackingUrl: true, shipmentStatus: true, fulfillmentStatus: true,
-      financialStatus: true, cancelledAt: true, isRTO: true,
+      financialStatus: true, cancelledAt: true, isRTO: true, hasDispute: true,
       buyerProfileId: true, customerEmail: true, customerPhone: true, customerId: true, updatedAt: true,
       disputes: {
         select: {
