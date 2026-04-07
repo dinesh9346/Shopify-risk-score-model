@@ -259,6 +259,52 @@ model shopify_dispute {
   @@schema("risk_score_model")
 }
 
+model Notification {
+  id                String             @id @default(cuid())
+  shop              String
+  channel           NotificationChannel
+  recipient         String
+  templateId        String?
+  status            NotificationStatus @default(PENDING)
+  providerMessageId String?
+  providerResponse  Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  
+  events            NotificationEvent[]
+  
+  @@index([shop, status])
+  @@index([providerMessageId])
+  @@schema("risk_score_model")
+}
+
+model NotificationEvent {
+  id             String        @id @default(cuid())
+  notificationId String
+  notification   Notification  @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  eventType      String
+  providerStatus String?
+  payload        Json
+  receivedAt     DateTime      @default(now())
+  
+  @@index([notificationId])
+  @@schema("risk_score_model")
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  @@schema("risk_score_model")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  @@schema("risk_score_model")
+}
+
 
 
 

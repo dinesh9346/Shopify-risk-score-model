@@ -1,8 +1,7 @@
 import prisma from "../db.server.js";
-import { enqueueOutboundRisk } from "./queue.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 import dns from 'dns/promises';
-
+import { enqueueOutboundRisk, enqueueNotification } from "./queue.server.js";
 // EXTERNAL API HELPER (OLA MAPS) 
 async function checkAddressValidity(orderId, fullAddress) {
   if (!fullAddress || fullAddress.trim() === "") return null;
@@ -133,6 +132,8 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     const firstName = customer?.first_name || payload.shipping_address?.first_name || payload.billing_address?.first_name || null;
     const lastName = customer?.last_name || payload.shipping_address?.last_name || payload.billing_address?.last_name || null;
     const orderValue = parseFloat(payload.total_price || "0");
+
+    const customerName = [firstName, lastName].filter(Boolean).join(' ') || 'Customer';
 
     let paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
     const isDraftOrder = payload.source_name === "shopify_draft_order" || payload.source_name === "2932204";
@@ -580,16 +581,41 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     });
     console.log(`✓ Saved Risk Score for order ${payload.id}`);
 
-    // Push out to Outbound Integrations Queue
+   
+    // 9. FINALIZE & ROUTE OUTBOUND DATA
     const riskFacts = reasons.map(r => ({ description: r.description, sentiment: r.sentiment || "NEUTRAL" }));
+    
+    // Queue the Risk Push to Shopify
     await enqueueOutboundRisk(shop, orderGid, score, riskLevel, riskFacts);
     console.log(`[INBOUND COMPLETE] Successfully routed ${riskLevel} risk score to Outbound Queue.`);
 
-    // SUCCESS - Tell Shopify to stop retrying
-    return new Response(null, { status: 200 });
+    // 10. TRIGGER OMNICHANNEL NOTIFICATIONS
 
+    try {
+        if (customerPhone || customerEmail) {
+            await enqueueNotification(
+                shop, 
+                orderGid, 
+                customerPhone, 
+                customerEmail, 
+                customerName, 
+                riskLevel, 
+                isCurrentCod,
+                orderValue
+            );
+            console.log(`[Notification] Successfully queued for Order ${orderGid}`);
+        } else {
+            console.log(`[Notification] Skipped: No phone or email found.`);
+        }
+    } catch (notificationError) {
+        console.error("[Notification Queue Error]:", notificationError);
+    }
+
+    // SUCCESS - Return 200 to Shopify
+    return new Response(null, { status: 200 });
+    
   } catch (error) {
-    // return 500 so Shopify's webhook retry system kicks in if the database drops.
+    // Return 500 so Shopify's webhook retry system kicks in if the database drops.
     console.error(`[CRITICAL ERROR] Failed to process Risk Score for Order ${payload.id}:`, error);
     return new Response("Internal Server Error", { status: 500 });
   }

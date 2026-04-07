@@ -1,7 +1,6 @@
-import { PassThrough } from "stream";
+import { PassThrough, Readable } from "stream";
 import { renderToPipeableStream } from "react-dom/server";
 import { ServerRouter } from "react-router";
-import { createReadableStreamFromReadable } from "@react-router/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
@@ -23,7 +22,7 @@ export default async function handleRequest(
       {
         [callbackName]: () => {
           const body = new PassThrough();
-          const stream = createReadableStreamFromReadable(body);
+          const stream = Readable.toWeb(body);
 
           responseHeaders.set("Content-Type", "text/html");
           resolve(
