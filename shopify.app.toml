@@ -12,34 +12,28 @@ automatically_update_urls_on_dev = true
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  topics = [ "orders/create" ]
-  uri = "/webhooks/orders/create"
+  topics = [ "fulfillments/update" ]
+  uri = "/webhooks/fulfillments"
 
   [[webhooks.subscriptions]]
-  topics = [ "orders/updated" ]
-  uri = "/webhooks/orders/updated"
+  topics = [ "fulfillments/create" ]
+  uri = "/webhooks/fulfillments"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
- [[webhooks.subscriptions]]
- topics = [ "fulfillments/create"]
- uri = "/webhooks/fulfillments"
-
- [[webhooks.subscriptions]]
- topics = [ "fulfillments/update"]
- uri = "/webhooks/fulfillments"
-
-
-
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_orders,read_payment_customizations,read_products,read_shopify_payments_disputes,write_orders,write_products,read_fulfillments,read_returns"
+scopes = "read_customers,read_fulfillments,read_orders,read_payment_customizations,read_products,read_returns,read_shopify_payments_disputes,write_orders,write_products"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]

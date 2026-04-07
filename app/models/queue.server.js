@@ -231,24 +231,43 @@ export async function startOutboundQueueListener() {
             const safeName = customerName || "Customer";
             const tasks = [];
 
-            // --- 1. LOW RISK (Standard Confirmation) ---
-            if (riskLevel === "LOW") {
-              if (email) tasks.push(notificationService.sendEmailNotification({
-                shop, recipient: email,
-                subject: `Your Zippyy Order is Confirmed! (#${orderId})`,
-                text: `Hi ${safeName},\n\nThank you for shopping with us! We've received your order and are packing it right now. We'll send tracking details soon!`,
-              }));
-              if (phone) tasks.push(notificationService.sendWhatsAppNotification({
-                shop, recipient: phone,
-                templateId: 'in_shipment_created',
-                templateData: {
-                  customerName: safeName,
-                  orderId: orderId.split('/').pop(),
-                },
-                customerName: safeName,
-              }));
-            } 
-            
+            // // --- 1. LOW RISK (Standard Confirmation) ---
+            // if (riskLevel === "LOW") {
+            //   if (email) tasks.push(notificationService.sendEmailNotification({
+            //     shop, recipient: email,
+            //     subject: `Your Zippyy Order is Confirmed! (#${orderId})`,
+            //     text: `Hi ${safeName},\n\nThank you for shopping with us! We've received your order and are packing it right now. We'll send tracking details soon!`,
+            //   }));
+            //   if (phone) tasks.push(notificationService.sendWhatsAppNotification({
+            //     shop, recipient: phone,
+            //     templateId: 'Order_delivery_confirmation',
+            //     templateData: {
+            //       customerName: safeName,
+            //       orderId: orderId.split('/').pop(),
+            //     },
+            //     customerName: safeName,
+            //   }));
+            // } 
+            // Inside your queue.server.js (Outbound Consumer)
+
+if (riskLevel === "LOW") {
+  if (phone) {
+    tasks.push(notificationService.sendWhatsAppNotification({
+      shop, 
+      recipient: phone,
+      // 🔄 TEST THIS SPECIFIC NAME FROM THE JAVA REPO:
+      templateId: 'Nexus_OTP_Verification', 
+      
+      templateData: {
+        customerName: safeName,
+        // Most OTP templates expect a 4-6 digit code as the first parameter
+        templateParams: ['123456'], 
+        orderId: orderId.split('/').pop(),
+      },
+      customerName: safeName,
+    }));
+  }
+}
             // --- 2. MEDIUM RISK (COD Verification) ---
             else if (riskLevel === "MEDIUM") {
               if (isCod) {

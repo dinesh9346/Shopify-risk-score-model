@@ -72,6 +72,7 @@ export class WhatsAppAdapter {
       const data = error.response?.data;
 
       console.error('--- WHATSAPP API ERROR ---');
+      console.error('Actual Error Message:', error.message);
       console.error('Status:', status);
       console.error('Data:', JSON.stringify(data, null, 2));
 
