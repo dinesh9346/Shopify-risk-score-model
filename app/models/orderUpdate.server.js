@@ -1,16 +1,21 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
+import { detectOrderStateChanges, updateStoredOrderState } from "./orderStateDetector.server.js";
+import { enqueueLifecycleNotification } from "./queue.server.js";
 
 export async function processOrderUpdate(shop, payload) {
   console.log(`[Order Update] Processing update for order: ${payload.id}`);
 
   try {
+    // 1. DETECT STATE CHANGES (Before updating the database)
+    const stateChanges = await detectOrderStateChanges(shop, payload);
     
     const isRtoStatus = ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
                payload.financial_status?.toLowerCase() === "refunded";
+    
+    // 2. UPDATE THE DATABASE
     await prisma.shopify_store_order.upsert({
       where: {
-        
         shop_shopifyOrderId: {
           shop: shop,
           shopifyOrderId: payload.admin_graphql_api_id
@@ -53,13 +58,35 @@ export async function processOrderUpdate(shop, payload) {
 
     console.log(` [Order Update] Local database successfully upserted for order ${payload.id}`);
 
-    //  2. Extract customer identity from the webhook payload
+    // 3. UPDATE STORED STATE FOR NEXT COMPARISON
+    await updateStoredOrderState(shop, payload);
+
+    // 4. QUEUE LIFECYCLE NOTIFICATIONS FOR EACH STATE CHANGE
     const customerEmail = payload.email || payload.customer?.email || null;
     const customerPhone = payload.shipping_address?.phone || payload.customer?.phone || null;
+    const customerName = [payload.customer?.first_name, payload.customer?.last_name].filter(Boolean).join(' ') || 'Customer';
+    const orderId = payload.admin_graphql_api_id;
+
+    for (const change of stateChanges) {
+      try {
+        await enqueueLifecycleNotification(shop, orderId, change.stage, {
+          customerEmail,
+          customerPhone,
+          customerName,
+          ...change.details
+        });
+        console.log(`[Order Update] Queued lifecycle notification: ${change.stage}`);
+      } catch (notifError) {
+        console.error(`[Order Update] Failed to queue ${change.stage}:`, notifError.message);
+        // Don't throw - continue processing other notifications
+      }
+    }
+
+    // 5. UPDATE BUYER PROFILE
     const customerId = payload.customer?.id ? `gid://shopify/Customer/${payload.customer.id}` : null;
     const numericOrderId = payload.id.toString();
 
-    //  3. Instantly recalculate the buyer's profile!
+    //  Instantly recalculate the buyer's profile!
     await updateSingleBuyerProfile(
       shop,
       customerEmail,

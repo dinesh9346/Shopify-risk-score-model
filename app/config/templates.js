@@ -58,8 +58,12 @@ export function formatTemplateParams(templateId, data = {}) {
       break;
 
     case WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED:
-      if (data.trackingId) params.push(data.trackingId);
-      if (data.deliveryDate) params.push(data.deliveryDate);
+      // Updated to match actual template: customer_name, order_number, product_details, order_type, seller_company_name
+      if (data.customerName) params.push(data.customerName);
+      if (data.orderId) params.push(data.orderId);
+      if (data.productDetails) params.push(data.productDetails);
+      if (data.orderType) params.push(data.orderType);
+      if (data.sellerCompanyName) params.push(data.sellerCompanyName);
       break;
 
     case WHATSAPP_TEMPLATES.NDR_VERIFICATION:

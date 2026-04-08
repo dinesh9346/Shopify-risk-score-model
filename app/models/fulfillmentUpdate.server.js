@@ -1,5 +1,6 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
+import { enqueueLifecycleNotification } from "./queue.server.js";
 
 const normalize = (value) =>
   (value || "").toString().trim().toLowerCase().replace(/\s+/g, "_").replace(/-+/g, "_");
@@ -112,6 +113,23 @@ export async function processFulfillmentUpdate(a, b, c) {
 
     const isRTO = shipmentStatus ? RTO_STATUSES.has(shipmentStatus) : false;
 
+    // Get PREVIOUS fulfillment state for change detection
+    let previousOrder = null;
+    if (orderGid) {
+      previousOrder = await prisma.shopify_store_order.findFirst({
+        where: { shopifyOrderId: orderGid, shop: shop },
+        select: {
+          fulfillmentStatus: true,
+          shipmentStatus: true,
+          financialStatus: true,
+          customerEmail: true,
+          customerPhone: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+    }
+
     if (topic === "FULFILLMENTS_CREATE" || topic === "FULFILLMENTS_UPDATE") {
       await prisma.shopify_store_order.updateMany({
         where: {
@@ -124,9 +142,54 @@ export async function processFulfillmentUpdate(a, b, c) {
           trackingUrl: trackingUrl,
           fulfillmentStatus: fulfillmentStatus,
           shipmentStatus: shipmentStatusRaw,
+          previousFulfillmentStatus: previousOrder?.fulfillmentStatus,
+          lastFulfillmentStatusChange: 
+            previousOrder?.fulfillmentStatus !== fulfillmentStatus ? new Date() : undefined,
           isRTO: isRTO,
         }
       });
+
+      // QUEUE LIFECYCLE NOTIFICATIONS for fulfillment status changes
+      if (previousOrder && previousOrder.fulfillmentStatus !== fulfillmentStatus) {
+        const customerEmail = previousOrder.customerEmail;
+        const customerPhone = previousOrder.customerPhone;
+        const customerName = [previousOrder.firstName, previousOrder.lastName].filter(Boolean).join(' ') || 'Customer';
+
+        // Map specific statuses to lifecycle notifications
+        if (fulfillmentStatus === "fulfilled" || fulfillmentStatus === "success") {
+          await enqueueLifecycleNotification(shop, orderGid, "DELIVERED", {
+            customerEmail, customerPhone, customerName,
+            productDetails: "Order Items",
+            orderType: "Standard",
+            sellerCompanyName: "Zippyy",
+            trackingId: trackingNumber || "N/A"
+          });
+        } else if (fulfillmentStatus?.toLowerCase().includes("in_transit")) {
+          await enqueueLifecycleNotification(shop, orderGid, "IN_TRANSIT", {
+            customerEmail, customerPhone, customerName,
+            trackingNumber: trackingNumber,
+            trackingUrl: trackingUrl
+          });
+        } else if (fulfillmentStatus?.toLowerCase().includes("out_for_delivery")) {
+          await enqueueLifecycleNotification(shop, orderGid, "OUT_FOR_DELIVERY", {
+            customerEmail, customerPhone, customerName
+          });
+        } else if (fulfillmentStatus === "delivered") {
+          await enqueueLifecycleNotification(shop, orderGid, "DELIVERED", {
+            customerEmail, customerPhone, customerName,
+            trackingId: trackingNumber || "N/A"
+          });
+        } else if (fulfillmentStatus === "partial") {
+          await enqueueLifecycleNotification(shop, orderGid, "ORDER_PARTIALLY_SHIPPED", {
+            customerEmail, customerPhone, customerName
+          });
+        } else if (fulfillmentStatus === "restocked") {
+          await enqueueLifecycleNotification(shop, orderGid, "ORDER_RESTOCKED", {
+            customerEmail, customerPhone, customerName
+          });
+        }
+        console.log(`[Fulfillment Update] Queued lifecycle notification for status: ${fulfillmentStatus}`);
+      }
     }
 
     if (topic === "FULFILLMENT_EVENTS_CREATE") {
@@ -154,12 +217,39 @@ export async function processFulfillmentUpdate(a, b, c) {
     }
 
     if (topic === "REFUNDS_CREATE") {
+      // Get order info for refund notification
+      const orderBeforeRefund = await prisma.shopify_store_order.findFirst({
+        where: { shopifyOrderId: orderGid, shop: shop },
+        select: {
+          financialStatus: true,
+          customerEmail: true,
+          customerPhone: true,
+          firstName: true,
+          lastName: true
+        }
+      });
+
       await prisma.shopify_store_order.updateMany({
         where: { shopifyOrderId: orderGid, shop: shop },
         data: {
-          financialStatus: "PARTIALLY_REFUNDED"
+          financialStatus: "PARTIALLY_REFUNDED",
+          previousFinancialStatus: orderBeforeRefund?.financialStatus,
+          lastFinancialStatusChange: new Date()
         }
       });
+
+      // Queue refund notification if this is a new refund
+      if (orderBeforeRefund?.financialStatus !== "PARTIALLY_REFUNDED") {
+        const customerEmail = orderBeforeRefund?.customerEmail;
+        const customerPhone = orderBeforeRefund?.customerPhone;
+        const customerName = [orderBeforeRefund?.firstName, orderBeforeRefund?.lastName].filter(Boolean).join(' ') || 'Customer';
+
+        await enqueueLifecycleNotification(shop, orderGid, "ORDER_REFUNDED", {
+          customerEmail, customerPhone, customerName,
+          refundReason: "Refund processed"
+        });
+        console.log(`[Refund Update] Queued refund notification for order`);
+      }
     }
 
     const orderData = await prisma.shopify_store_order.findFirst({

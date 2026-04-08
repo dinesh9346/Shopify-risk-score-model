@@ -1,5 +1,15 @@
 
 import prisma from "../db.server.js";
+
+function isEligibleForRevenueOrder(fStatus, fulfillment, hasDispute, disputeCount, cancelledAt, isRTO) {
+  const hasKnownDispute = hasDispute || disputeCount > 0;
+  return (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") &&
+         (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") &&
+         !hasKnownDispute &&
+         !cancelledAt &&
+         !isRTO;
+}
+
 export async function triggerBulkOrderSync(admin, shop) {
   console.log(`[BULK SYNC] Starting bulk order sync for ${shop}`);
 
@@ -266,7 +276,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
     const isCod = order.paymentGateway?.toLowerCase().includes("cod") || order.paymentGateway?.toLowerCase().includes("cash");
     
     if (isCod) profile.codCount += 1;
-    if (order.hasDispute) profile.disputeCount += 1;
+    if (order.hasDispute || (order.disputes?.length || 0) > 0) profile.disputeCount += 1;
 
     if (fulfillment === "FULFILLED" || fulfillment === "SUCCESS") {
       profile.fulfilledCount += 1;
@@ -281,30 +291,18 @@ export async function buildHistoricalBuyerProfiles(shop) {
     if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
-    // NET REVENUE CALCULATION: Add all order values initially, then subtract losses
     const orderValue = Number(order.orderValue || 0);
-    let amountToSubtract = 0;
-
-    // 1. Check for total loss conditions first (Dispute Lost, Cancelled, Fully Refunded)
-    const hasLostDispute = order.disputes?.some(d => 
-      (d.status || "").toLowerCase() === "lost" || (d.status || "").toLowerCase() === "charge_refunded"
+    const isEligibleForRevenue = isEligibleForRevenueOrder(
+      fStatus,
+      fulfillment,
+      order.hasDispute,
+      order.disputes?.length || 0,
+      order.cancelledAt,
+      order.isRTO
     );
 
-    if (hasLostDispute || order.cancelledAt || fulfillment === "CANCELLED" || fStatus === "REFUNDED") {
-      amountToSubtract = orderValue; // Subtract the whole thing
-    } 
-    // 2. Handle Partial Refunds accurately (when we have the exact amount)
-    else if (fStatus === "PARTIALLY_REFUNDED") {
-      // Note: Ensure your data parser is pulling 'totalRefunded' from Shopify
-      // For now, don't subtract anything to avoid over-penalizing legitimate partial refunds
-      amountToSubtract = 0; // Will be: Number(order.totalRefunded || 0);
-    }
-
-    // Apply the math once
-    profile.totalSpend = (profile.totalSpend + orderValue) - amountToSubtract;
-
-    const isClean = !order.cancelledAt && !(order.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !order.hasDispute;
-    if (fStatus === "PAID" && fulfillment === "FULFILLED" && isClean) {
+    if (isEligibleForRevenue) {
+      profile.totalSpend += orderValue;
       profile.validOrderCount += 1;
     }
   });
@@ -457,7 +455,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       if (isCod) profile.codCount += 1;
       
       // Fallback for legacy boolean check
-      if (o.hasDispute && (!o.disputes || o.disputes.length === 0)) {
+      if (o.hasDispute || (o.disputes?.length || 0) > 0) {
         profile.disputeCount += 1;
       }
 
@@ -497,35 +495,18 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
         profile.refundCount += 1;
       }
 
-      // --- NET REVENUE GATEKEEPER ---
       const orderValue = Number(o.orderValue || 0);
-      let amountToSubtract = 0;
-
-      // 1. Check for total loss conditions first (Dispute Lost, Cancelled, Fully Refunded)
-      const hasLostDispute = o.disputes?.some(d => 
-        (d.status || "").toLowerCase() === "lost" || (d.status || "").toLowerCase() === "charge_refunded"
+      const isEligibleForRevenue = isEligibleForRevenueOrder(
+        fStatus,
+        fulfillment,
+        o.hasDispute,
+        o.disputes?.length || 0,
+        o.cancelledAt,
+        o.isRTO
       );
 
-      if (hasLostDispute || o.cancelledAt || fulfillment === "CANCELLED" || fStatus === "REFUNDED") {
-        amountToSubtract = orderValue; // Subtract the whole thing
-      } 
-      // 2. Handle Partial Refunds accurately (when we have the exact amount)
-      else if (fStatus === "PARTIALLY_REFUNDED") {
-        // Note: Ensure your data parser is pulling 'totalRefunded' from Shopify
-        // For now, don't subtract anything to avoid over-penalizing legitimate partial refunds
-        amountToSubtract = 0; // Will be: Number(o.totalRefunded || 0);
-      }
-
-      // Apply the math once
-      profile.totalSpend = (profile.totalSpend + orderValue) - amountToSubtract;
-
-      const isEligibleForRevenue = (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && 
-                                   (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") && 
-                                   !o.hasDispute && 
-                                   !o.cancelledAt && 
-                                   !o.isRTO;
-
       if (isEligibleForRevenue) {
+        profile.totalSpend += orderValue;
         profile.validOrderCount += 1;
       }
     });

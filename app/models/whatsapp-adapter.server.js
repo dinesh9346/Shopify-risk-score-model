@@ -15,6 +15,7 @@ export class WhatsAppAdapter {
       baseURL: this.baseUrl,
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`, // Try Bearer token authentication first
       },
     });
   }
@@ -36,22 +37,54 @@ export class WhatsAppAdapter {
           console.warn('[WhatsAppAdapter] Normalizing campaign name from templateId:', templateId, '->', campaignName);
         }
 
-        payload = {
-          apiKey: this.apiKey,
-          campaignName,
-          destination: cleanTo,
-          userName: templateData?.customerName || customerName || '',
-          templateParams: params,
-          source: templateData?.source || 'new-landing-page form',
-          media: templateData?.media || {},
-          buttons: templateData?.buttons || [],
-          carouselCards: templateData?.carouselCards || [],
-          location: templateData?.location || {},
-          attributes: templateData?.attributes || {},
-          paramsFallbackValue: templateData?.paramsFallbackValue || {
-            FirstName: templateData?.customerName?.split(' ')[0] || 'user',
-          },
-        };
+        // Check if this template has button components
+        const hasButtons = templateData?.trackingId || templateData?.trackingNumber;
+
+        if (hasButtons) {
+          // Use component-based structure for templates with buttons
+          payload = {
+            to: cleanTo,
+            type: "template",
+            template: {
+              name: templateId,
+              language: {
+                code: "en"
+              },
+              components: [
+                {
+                  type: "body",
+                  parameters: params.map(param => ({ type: "text", text: param }))
+                },
+                {
+                  type: "button",
+                  sub_type: "url",
+                  index: "0",
+                  parameters: [
+                    { type: "text", text: templateData?.trackingId || templateData?.trackingNumber || "N/A" }
+                  ]
+                }
+              ]
+            }
+          };
+        } else {
+          // Use legacy MyOperator format for templates without buttons
+          payload = {
+            apiKey: this.apiKey,
+            campaignName,
+            destination: cleanTo,
+            userName: templateData?.customerName || customerName || '',
+            templateParams: params,
+            source: templateData?.source || 'new-landing-page form',
+            media: templateData?.media || {},
+            buttons: templateData?.buttons || [],
+            carouselCards: templateData?.carouselCards || [],
+            location: templateData?.location || {},
+            attributes: templateData?.attributes || {},
+            paramsFallbackValue: templateData?.paramsFallbackValue || {
+              FirstName: templateData?.customerName?.split(' ')[0] || 'user',
+            },
+          };
+        }
       } else {
         payload = {
           apiKey: this.apiKey,
@@ -78,6 +111,33 @@ export class WhatsAppAdapter {
     } catch (error) {
       const status = error.response?.status;
       const data = error.response?.data;
+
+      // If Bearer token authentication fails with 401, try fallback method with apiKey in payload
+      if (status === 401 && payload.apiKey === undefined) {
+        console.log('[WhatsAppAdapter] Bearer token failed, trying fallback with apiKey in payload...');
+
+        try {
+          const fallbackPayload = { ...payload, apiKey: this.apiKey };
+          const fallbackResponse = await axios.post(`${this.baseUrl}${this.sendEndpoint}`, fallbackPayload, {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+
+          console.log(`[WhatsApp Success] Message sent to ${cleanTo} (fallback method)`);
+
+          return {
+            success: true,
+            providerMessageId: fallbackResponse.data.messageId || fallbackResponse.data.id || `wa-${Date.now()}`,
+            response: fallbackResponse.data,
+          };
+        } catch (fallbackError) {
+          console.error('--- WHATSAPP API ERROR (FALLBACK ALSO FAILED) ---');
+          console.error('Fallback Error Message:', fallbackError.message);
+          console.error('Fallback Status:', fallbackError.response?.status);
+          console.error('Fallback Data:', JSON.stringify(fallbackError.response?.data, null, 2));
+        }
+      }
 
       console.error('--- WHATSAPP API ERROR ---');
       console.error('Actual Error Message:', error.message);

@@ -184,6 +184,34 @@ export async function enqueueNotification(shop, orderId, phone, email, customerN
     console.error(` [NOTIFICATION PRODUCER ERROR] Failed to queue notification:`, error);
   }
 }
+
+// NEW: Enqueue lifecycle stage notifications (PAYMENT_CONFIRMED, DELIVERED, etc.)
+export async function enqueueLifecycleNotification(shop, orderId, stage, orderData = {}) {
+  const safeShop = shop || "unknown-shop";
+  const safeOrderId = orderId ? orderId.replace(/[^0-9]/g, '') : "unknown-id";
+
+  const params = {
+    QueueUrl: OUTBOUND_QUEUE_URL,
+    MessageBody: JSON.stringify({
+      taskType: "LIFECYCLE_UPDATE",
+      shop,
+      orderId,
+      stage, // e.g., "PAYMENT_CONFIRMED", "IN_TRANSIT", "DELIVERED", "ORDER_CANCELLED", "ORDER_REFUNDED"
+      orderData, // Contains customer info, tracking data, etc.
+      timestamp: new Date().toISOString()
+    }),
+    MessageGroupId: safeShop,
+    MessageDeduplicationId: `lifecycle-${safeOrderId}-${stage}-${Date.now()}`
+  };
+
+  try {
+    await sqsClient.send(new SendMessageCommand(params));
+    console.log(` [LIFECYCLE PRODUCER] Queued ${stage} notification for ${orderId}`);
+  } catch (error) {
+    console.error(` [LIFECYCLE PRODUCER ERROR] Failed to queue ${stage}:`, error);
+    throw error;
+  }
+}
 export async function startOutboundQueueListener() {
   if (process.env.NODE_ENV !== "production" && global.__outboundWorkerStarted) {
     console.log(" [OUTBOUND CONSUMER] Worker already running. Skipping duplicate start.");
@@ -297,7 +325,194 @@ export async function startOutboundQueueListener() {
             await Promise.allSettled(tasks);
           }
 
-          // If successful (either route), delete the message!
+          // ROUTE 3: SEND LIFECYCLE STAGE NOTIFICATIONS (NEW)
+          else if (taskType === "LIFECYCLE_UPDATE") {
+            const { shop, orderId, stage, orderData } = payload;
+            const customerEmail = orderData?.customerEmail;
+            const customerPhone = orderData?.customerPhone;
+            const customerName = orderData?.customerName || "Customer";
+            
+            const cleanOrderId = orderId.split('/').pop();
+            const tasks = [];
+
+            console.log(` [LIFECYCLE CONSUMER] Processing ${stage} for ${cleanOrderId}`);
+
+            // Map each lifecycle stage to notification handlers
+            switch (stage) {
+              case "PAYMENT_CONFIRMED":
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Payment Confirmed for Order #${cleanOrderId}`,
+                    text: `Hi ${customerName},\n\nWe've received your payment. Your order is being prepared for shipment.\n\nOrder ID: ${cleanOrderId}`
+                  }));
+                }
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.ORDER_CONFIRMATION,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId
+                    }
+                  }));
+                }
+                break;
+
+              case "ORDER_FULLY_PACKED":
+              case "SHIPMENT_CREATED":
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.SHIPMENT_CREATED,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId,
+                      productDetails: orderData?.productDetails || "Order Items",
+                      orderType: orderData?.orderType || "Standard",
+                      orderAmount: orderData?.orderAmount || 0,
+                      sellerCompanyName: orderData?.sellerCompanyName || "Zippyy"
+                    }
+                  }));
+                }
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Your Order #${cleanOrderId} is Being Shipped`,
+                    text: `Hi ${customerName},\n\nYour order is being packed and will ship soon. Track it using the link in your account.`
+                  }));
+                }
+                break;
+
+              case "IN_TRANSIT":
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId,
+                      trackingNumber: orderData?.trackingNumber || "N/A",
+                      trackingUrl: orderData?.trackingUrl || ""
+                    }
+                  }));
+                }
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Order #${cleanOrderId} is In Transit`,
+                    text: `Hi ${customerName},\n\nYour order is on its way! Tracking: ${orderData?.trackingNumber || "Available in your account"}`
+                  }));
+                }
+                break;
+
+              case "OUT_FOR_DELIVERY":
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_COD,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId
+                    }
+                  }));
+                }
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Order #${cleanOrderId} - Out for Delivery Today!`,
+                    text: `Hi ${customerName},\n\nYour order is out for delivery today. Please be available to receive it.`
+                  }));
+                }
+                break;
+
+              case "DELIVERED":
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId,
+                      productDetails: orderData?.productDetails || "Order Items",
+                      orderType: orderData?.orderType || "Standard",
+                      sellerCompanyName: orderData?.sellerCompanyName || "Zippyy",
+                      trackingId: orderData?.trackingId || "N/A"
+                    }
+                  }));
+                }
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Order #${cleanOrderId} Delivered!`,
+                    text: `Hi ${customerName},\n\nYour order has been successfully delivered. Thank you for your purchase!`
+                  }));
+                }
+                break;
+
+              case "ORDER_CANCELLED":
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Order #${cleanOrderId} Has Been Cancelled`,
+                    text: `Hi ${customerName},\n\nYour order has been cancelled. Reason: ${orderData?.cancelReason || "Unknown"}\n\nPlease contact support if you have questions.`
+                  }));
+                }
+                break;
+
+              case "ORDER_REFUNDED":
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Refund Processed for Order #${cleanOrderId}`,
+                    text: `Hi ${customerName},\n\nA refund of ${orderData?.refundAmount || "N/A"} has been processed. It may take 5-7 business days to reflect in your account.`
+                  }));
+                }
+                break;
+
+              case "ORDER_PARTIALLY_SHIPPED":
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Part of Your Order #${cleanOrderId} Has Shipped`,
+                    text: `Hi ${customerName},\n\nPart of your order has been shipped. The remaining items will ship separately soon.`
+                  }));
+                }
+                break;
+
+              case "ORDER_RESTOCKED":
+                if (customerEmail) {
+                  tasks.push(notificationService.sendEmailNotification({
+                    shop,
+                    recipient: customerEmail,
+                    subject: `Order #${cleanOrderId} Status Update`,
+                    text: `Hi ${customerName},\n\nYour order items have been restocked and will be shipped shortly.`
+                  }));
+                }
+                break;
+
+              default:
+                console.log(`[LIFECYCLE CONSUMER] No handler for stage: ${stage}`);
+            }
+
+            // Execute all lifecycle notification tasks
+            await Promise.allSettled(tasks);
+          }
+
+          // If successful (any route), delete the message!
           await sqsClient.send(new DeleteMessageCommand({
             QueueUrl: OUTBOUND_QUEUE_URL,
             ReceiptHandle: message.ReceiptHandle,

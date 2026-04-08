@@ -45,6 +45,10 @@ model shopify_store_order {
   paymentGateway    String?
   financialStatus   String?
   fulfillmentStatus String?
+  previousFinancialStatus   String?  // For detecting state changes
+  previousFulfillmentStatus String?  // For detecting state changes
+  lastFinancialStatusChange DateTime? // Track when financial status last changed
+  lastFulfillmentStatusChange DateTime? // Track when fulfillment status last changed
 
   carrier           String?
   trackingNumber    String?
