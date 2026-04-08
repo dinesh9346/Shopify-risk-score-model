@@ -212,100 +212,84 @@ export async function startOutboundQueueListener() {
         const taskType = payload.taskType || "RISK_PUSH"; 
         
         try {
-          // =====================================
+
           // ROUTE 1: PUSH RISK SCORE TO SHOPIFY
-          // =====================================
+
           if (taskType === "RISK_PUSH") {
             console.log(` [OUTBOUND CONSUMER] Pushing Risk Score for ${payload.orderId}...`);
             await pushRiskToShopify(payload.shop, payload.orderId, payload.riskLevel, payload.riskFacts);
           } 
           
-          // =====================================
-          // ROUTE 2: SEND NOTIFICATIONS (ALL RISK LEVELS)
-          // =====================================
+          
+          // ROUTE 2: SEND NOTIFICATIONS 
+     
           else if (taskType === "NOTIFICATION") {
             const { shop, orderId, phone, email, customerName, riskLevel, isCod } = payload;
-            const orderValue = payload.orderValue ?? 0; // Default to 0 if undefined (handles old queue messages)
+            const orderValue = payload.orderValue ?? 0;
             console.log(` [OUTBOUND CONSUMER] Sending Notifications for ${orderId} | Risk: ${riskLevel}`);
             
             const safeName = customerName || "Customer";
+            const cleanOrderId = orderId.split('/').pop();
             const tasks = [];
 
-            // // --- 1. LOW RISK (Standard Confirmation) ---
-            // if (riskLevel === "LOW") {
-            //   if (email) tasks.push(notificationService.sendEmailNotification({
-            //     shop, recipient: email,
-            //     subject: `Your Zippyy Order is Confirmed! (#${orderId})`,
-            //     text: `Hi ${safeName},\n\nThank you for shopping with us! We've received your order and are packing it right now. We'll send tracking details soon!`,
-            //   }));
-            //   if (phone) tasks.push(notificationService.sendWhatsAppNotification({
-            //     shop, recipient: phone,
-            //     templateId: 'Order_delivery_confirmation',
-            //     templateData: {
-            //       customerName: safeName,
-            //       orderId: orderId.split('/').pop(),
-            //     },
-            //     customerName: safeName,
-            //   }));
-            // } 
-            // Inside your queue.server.js (Outbound Consumer)
+            // 🚨 FORCED EMAIL TEMPLATE TEST 🚨
+            if (email) {
+              console.log("--> FIRING SENDGRID TEMPLATE TEST <--");
+              tasks.push(notificationService.sendEmailNotification({
+                shop, 
+                recipient: email,
+                // Using the exact ID from your company's JSON for IN shipment_created
+                templateId: 'd-aa96a93348b34b0ca20c10795f4cd2be', 
+                
+                templateData: {
+                  customer_name: safeName, 
+                  order_id: cleanOrderId,
+                  tracking_url: `https://${shop}/apps/zippyy/track` // Mock data
+                }
+              }));
+            }
 
-if (riskLevel === "LOW") {
-  if (phone) {
-    tasks.push(notificationService.sendWhatsAppNotification({
-      shop, 
-      recipient: phone,
-      // 🔄 TEST THIS SPECIFIC NAME FROM THE JAVA REPO:
-      templateId: 'Nexus_OTP_Verification', 
-      
-      templateData: {
-        customerName: safeName,
-        // Most OTP templates expect a 4-6 digit code as the first parameter
-        templateParams: ['123456'], 
-        orderId: orderId.split('/').pop(),
-      },
-      customerName: safeName,
-    }));
-  }
-}
+             if (phone) {
+              console.log("--> FIRING WHATSAPP SHIPMENT BOOKED NOTIFICATION <--");
+              tasks.push(notificationService.sendWhatsAppNotification({
+                shop,
+                recipient: phone,
+                templateId: WHATSAPP_TEMPLATES.SHIPMENT_CREATED,
+                templateData: {
+                  customerName: safeName,
+                  orderId: cleanOrderId,
+                  productDetails: payload.productDetails || "Order Items",
+                  orderType: isCod ? "COD" : "Prepaid",
+                  orderAmount: payload.orderValue || 0,
+                  sellerCompanyName: payload.sellerCompanyName || "Zippyy",
+                },
+                customerName: safeName,
+              }));
+            }
+
+            // --- 1. LOW RISK (Standard Confirmation) ---
+            if (riskLevel === "LOW") {
+               console.log("[Test Mode] Order is LOW risk. Shipment booked WhatsApp sent.");
+            }
             // --- 2. MEDIUM RISK (COD Verification) ---
             else if (riskLevel === "MEDIUM") {
               if (isCod) {
                 if (email) {
-                  const confirmUrl = `https://${shop}/api/confirm-cod?orderId=${orderId.split('/').pop()}&phone=${phone}`;
+                  const confirmUrl = `https://${shop}/api/confirm-cod?orderId=${cleanOrderId}&phone=${phone}`;
                   tasks.push(notificationService.sendEmailNotification({
                     shop, recipient: email,
-                    subject: `Action Required: Verify Your Order (#${orderId})`,
+                    subject: `Action Required: Verify Your Order (#${cleanOrderId})`,
                     text: `Hi ${safeName},\n\nWe received your COD order. Please click the link below to confirm so we can ship it out:\n\n${confirmUrl}`,
                   }));
                 }
-                if (phone) tasks.push(notificationService.sendWhatsAppNotification({
-                  shop, recipient: phone,
-                  message: `Hi ${safeName}! We received your COD order #${orderId.split('/').pop()}. Please reply with 'YES' to confirm.`,
-                  customerName: safeName,
-                }));
-              } else {
-                // If it's Medium Risk but ALREADY PAID, just send a confirmation
-                if (phone) tasks.push(notificationService.sendWhatsAppNotification({
-                   shop, recipient: phone,
-                   message: `Hi ${safeName}! Your Zippyy order #${orderId.split('/').pop()} is confirmed and being processed.`,
-                   customerName: safeName,
-                }));
               }
             }
-
             // --- 3. HIGH RISK (Alert / Fraud Warning) ---
             else if (riskLevel === "HIGH") {
               if (email) tasks.push(notificationService.sendEmailNotification({
                 shop, recipient: email,
-                subject: `Important Update regarding your Order (#${orderId})`,
+                subject: `Important Update regarding your Order (#${cleanOrderId})`,
                 text: `Hi ${safeName},\n\nOur system flagged an issue verifying your order details. To avoid cancellation, please reply to this email or contact support to confirm your shipping address.`,
-              }));
-              
-              if (phone) tasks.push(notificationService.sendWhatsAppNotification({
-                shop, recipient: phone,
-                message: `Hi ${safeName}! Your Zippyy order #${orderId.split('/').pop()} requires verification. Our team will contact you shortly.`,
-                customerName: safeName,
               }));
             }
 
@@ -319,13 +303,12 @@ if (riskLevel === "LOW") {
             ReceiptHandle: message.ReceiptHandle,
           }));
           console.log(` [OUTBOUND CONSUMER] Success! Deleted ${taskType} from AWS.`);
-          
-        } catch (taskError) {
-          console.error(` [OUTBOUND TASK ERROR] Failed to process ${taskType}:`, taskError.message);
+        } catch (error) {
+          console.error(" [OUTBOUND PROCESSING ERROR]", error.message);
         }
       }
     } catch (error) {
-      console.error(" [OUTBOUND NETWORK ERROR]", error.message);
+      console.error("[OUTBOUND NETWORK ERROR] Polling failed. Retrying in 5 seconds...", error);
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }

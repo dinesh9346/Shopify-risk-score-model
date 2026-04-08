@@ -393,7 +393,28 @@ export async function calculateAndApplyRiskScore(shop, payload) {
           validOrderCount++;
           validTotalSpend += Number(o.orderValue || 0);
         }
-        totalSpend += Number(o.orderValue || 0);
+        
+        // NET REVENUE CALCULATION: Add all orders initially, then subtract losses
+        const orderValue = Number(o.orderValue || 0);
+        let amountToSubtract = 0;
+
+        // 1. Check for total loss conditions first (Dispute Lost, Cancelled, Fully Refunded)
+        const hasLostDispute = o.disputes?.some(d => 
+          (d.status || "").toLowerCase() === "lost" || (d.status || "").toLowerCase() === "charge_refunded"
+        );
+
+        if (hasLostDispute || o.cancelledAt || fulfillment === "CANCELLED" || fStatus === "REFUNDED") {
+          amountToSubtract = orderValue; // Subtract the whole thing
+        } 
+        // 2. Handle Partial Refunds accurately (when we have the exact amount)
+        else if (fStatus === "PARTIALLY_REFUNDED") {
+          // Note: Ensure your data parser is pulling 'totalRefunded' from Shopify
+          // For now, don't subtract anything to avoid over-penalizing legitimate partial refunds
+          amountToSubtract = 0; // Will be: Number(o.totalRefunded || 0);
+        }
+
+        // Apply the math once
+        totalSpend = (totalSpend + orderValue) - amountToSubtract;
       });
 
       let cancelRate = cancelledCount / totalOrders;

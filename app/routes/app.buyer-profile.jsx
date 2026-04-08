@@ -494,7 +494,20 @@ export default function Index() {
       return "cancelled";
     }
 
-    if (ship === "delivered" || fulfill === "delivered"||ship ==="Delivered") return "delivered";
+    if (ship === "delivered" || fulfill === "delivered" || ship === "Delivered") {
+      const isClean = !order?.cancelledAt && !(order?.isRTO || fulfill === "returned" || fulfill === "restocked") && !order?.hasDispute && !(order?.disputes && order?.disputes.length > 0);
+      
+      if (isClean) {
+        return "delivered";
+      } else if (order?.isRTO) {
+        return "rto";
+      } else if (fulfill === "returned" || fulfill === "restocked") {
+        return "returned";
+      } else {
+        // It was physically delivered, but money was lost (Chargeback/Refund)
+        return "delivered_with_issue"; 
+      }
+    }
     if (SHIPMENT_IN_TRANSIT.has(ship)) return "in_transit";
     if (SHIPMENT_PRE_TRANSIT.has(ship)) return "pre_transit";
     if (SHIPMENT_PENDING.has(ship)) return "pending";
@@ -516,6 +529,7 @@ export default function Index() {
     if (bucket === "pre_transit") return <Badge tone="info">Pre-Transit</Badge>; // <-- NEW BADGE
     if (bucket === "in_transit") return <Badge tone="info">In Transit</Badge>;
     if (bucket === "delivered") return <Badge tone="success">Delivered</Badge>;
+    if (bucket === "delivered_with_issue") return <Badge tone="warning">Delivered with Issue</Badge>;
     if (bucket === "rto") return <Badge tone="critical">RTO / Failed Delivery</Badge>;
     if (bucket === "cancelled") return <Badge tone="critical">Cancelled</Badge>;
     return <Badge>Processing</Badge>;
@@ -562,6 +576,7 @@ export default function Index() {
     { id: "pre-transit", content: "Pre-Transit" }, 
     { id: "in-transit", content: "In Transit" },
     { id: "delivered", content: "Delivered" },
+    { id: "delivered_with_issue", content: "Delivered with Issue" },
     { id: "rto", content: "RTO / Failed" },
     { id: "cancelled", content: "Cancelled" },
     { id: "disputed", content: "Disputed" }, // <-- ADDED THIS LINE
@@ -660,9 +675,10 @@ export default function Index() {
       if (orderHistoryTab === 2) return bucket === "pre_transit"; 
       if (orderHistoryTab === 3) return bucket === "in_transit";
       if (orderHistoryTab === 4) return bucket === "delivered";
-      if (orderHistoryTab === 5) return bucket === "rto";
-      if (orderHistoryTab === 6) return bucket === "cancelled";
-      if (orderHistoryTab === 7) return bucket === "disputed";
+      if (orderHistoryTab === 5) return bucket === "delivered_with_issue";
+      if (orderHistoryTab === 6) return bucket === "rto";
+      if (orderHistoryTab === 7) return bucket === "cancelled";
+      if (orderHistoryTab === 8) return bucket === "disputed";
       return true;
     });
 

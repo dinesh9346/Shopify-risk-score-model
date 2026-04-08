@@ -30,7 +30,7 @@ export class SendGridAdapter {
     }
   }
 
-  async sendTemplate({ to, templateId, templateData, from = 'noreply@zippyy.com' }) {
+  async sendTemplate({ to, templateId, templateData, from = 'support@godash.ai' }) {
     try {
       const msg = {
         to,

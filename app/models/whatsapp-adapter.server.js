@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { formatTemplateParams } from '../config/templates.js';
+import { formatTemplateParams, WHATSAPP_CAMPAIGNS } from '../config/templates.js';
 
 export class WhatsAppAdapter {
   constructor() {
@@ -29,10 +29,10 @@ export class WhatsAppAdapter {
 
       // 2. Adjust payload for MyOperator V2 structure
       if (templateId) {
-        const campaignName = String(templateId).split('/').pop();
+        const campaignName = WHATSAPP_CAMPAIGNS[templateId] || String(templateId).split('/').pop();
         const params = formatTemplateParams(templateId, templateData);
 
-        if (campaignName !== templateId) {
+        if (!WHATSAPP_CAMPAIGNS[templateId] && campaignName !== templateId) {
           console.warn('[WhatsAppAdapter] Normalizing campaign name from templateId:', templateId, '->', campaignName);
         }
 
@@ -40,9 +40,17 @@ export class WhatsAppAdapter {
           apiKey: this.apiKey,
           campaignName,
           destination: cleanTo,
-          userName: templateData?.customerName || '',
+          userName: templateData?.customerName || customerName || '',
           templateParams: params,
-          templateData: templateData || {},
+          source: templateData?.source || 'new-landing-page form',
+          media: templateData?.media || {},
+          buttons: templateData?.buttons || [],
+          carouselCards: templateData?.carouselCards || [],
+          location: templateData?.location || {},
+          attributes: templateData?.attributes || {},
+          paramsFallbackValue: templateData?.paramsFallbackValue || {
+            FirstName: templateData?.customerName?.split(' ')[0] || 'user',
+          },
         };
       } else {
         payload = {

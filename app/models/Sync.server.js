@@ -281,14 +281,34 @@ export async function buildHistoricalBuyerProfiles(shop) {
     if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
     else if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") profile.refundCount += 1;
 
+    // NET REVENUE CALCULATION: Add all order values initially, then subtract losses
+    const orderValue = Number(order.orderValue || 0);
+    let amountToSubtract = 0;
+
+    // 1. Check for total loss conditions first (Dispute Lost, Cancelled, Fully Refunded)
+    const hasLostDispute = order.disputes?.some(d => 
+      (d.status || "").toLowerCase() === "lost" || (d.status || "").toLowerCase() === "charge_refunded"
+    );
+
+    if (hasLostDispute || order.cancelledAt || fulfillment === "CANCELLED" || fStatus === "REFUNDED") {
+      amountToSubtract = orderValue; // Subtract the whole thing
+    } 
+    // 2. Handle Partial Refunds accurately (when we have the exact amount)
+    else if (fStatus === "PARTIALLY_REFUNDED") {
+      // Note: Ensure your data parser is pulling 'totalRefunded' from Shopify
+      // For now, don't subtract anything to avoid over-penalizing legitimate partial refunds
+      amountToSubtract = 0; // Will be: Number(order.totalRefunded || 0);
+    }
+
+    // Apply the math once
+    profile.totalSpend = (profile.totalSpend + orderValue) - amountToSubtract;
+
     const isClean = !order.cancelledAt && !(order.isRTO || fulfillment === "RETURNED" || fStatus === "REFUNDED") && !order.hasDispute;
     if (fStatus === "PAID" && fulfillment === "FULFILLED" && isClean) {
       profile.validOrderCount += 1;
-      profile.totalSpend += Number(order.orderValue || 0);
     }
   });
 
-  // --- BATCH WRITING FIX ---
   let batchPromises = [];
   let totalSaved = 0;
 
@@ -478,6 +498,27 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       }
 
       // --- NET REVENUE GATEKEEPER ---
+      const orderValue = Number(o.orderValue || 0);
+      let amountToSubtract = 0;
+
+      // 1. Check for total loss conditions first (Dispute Lost, Cancelled, Fully Refunded)
+      const hasLostDispute = o.disputes?.some(d => 
+        (d.status || "").toLowerCase() === "lost" || (d.status || "").toLowerCase() === "charge_refunded"
+      );
+
+      if (hasLostDispute || o.cancelledAt || fulfillment === "CANCELLED" || fStatus === "REFUNDED") {
+        amountToSubtract = orderValue; // Subtract the whole thing
+      } 
+      // 2. Handle Partial Refunds accurately (when we have the exact amount)
+      else if (fStatus === "PARTIALLY_REFUNDED") {
+        // Note: Ensure your data parser is pulling 'totalRefunded' from Shopify
+        // For now, don't subtract anything to avoid over-penalizing legitimate partial refunds
+        amountToSubtract = 0; // Will be: Number(o.totalRefunded || 0);
+      }
+
+      // Apply the math once
+      profile.totalSpend = (profile.totalSpend + orderValue) - amountToSubtract;
+
       const isEligibleForRevenue = (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && 
                                    (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") && 
                                    !o.hasDispute && 
@@ -486,10 +527,6 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
 
       if (isEligibleForRevenue) {
         profile.validOrderCount += 1;
-        const grossValue = Number(o.orderValue || 0);
-        const refundedAmount = Number(o.totalRefundedAmount || 0); 
-        const netValue = grossValue - refundedAmount;
-        profile.totalSpend += netValue;
       }
     });
 
@@ -528,235 +565,152 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
   }
 }
 
-// /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */
-// export async function updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid) {
-//   try {
-//     let safeEmail = customerEmail?.trim().toLowerCase() || null;
-//     let safePhone = customerPhone?.trim() || null;
-//     const safeCustId = customerId?.trim() || null;
-
-//     let safeFirstName = null;
-//     let safeLastName = null;
-
-//     // Default identifier if they are completely new
-//     let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
-
-//     // 1. Attempt to find an existing profile
-//     let existingProfile = null;
-
-//     // First, if we have customerId, check if a profile exists with buyerIdentifier = customerId
-//     if (safeCustId) {
-//       existingProfile = await prisma.zippyy_buyer_profile.findUnique({
-//         where: { shop_buyerIdentifier: { shop, buyerIdentifier: safeCustId } }
-//       });
-//       if (existingProfile) {
-//         buyerIdentifier = safeCustId;
-//       }
-//     }
-
-//     // If not found, search by other identifiers
-//     if (!existingProfile) {
-//       existingProfile = await prisma.zippyy_buyer_profile.findFirst({
-//         where: {
-//           shop,
-//           OR: [
-//             safeEmail ? { customerEmail: safeEmail } : undefined,
-//             safeCustId ? { customerId: safeCustId } : undefined,
-//             safePhone ? { customerPhone: safePhone } : undefined,
-//           ].filter(Boolean) // Cleans out any undefined rules
-//         }
-//       });
-//       if (existingProfile) {
-//         buyerIdentifier = existingProfile.buyerIdentifier;
-//       }
-//     }
-
-//     if (existingProfile) {
-//       safeEmail = safeEmail || existingProfile.customerEmail;
-//       safePhone = safePhone || existingProfile.customerPhone;
-//       safeFirstName = existingProfile.firstName || null;
-//       safeLastName = existingProfile.lastName || null;
-//     }
-
-//     // Now fetch their order history...
-//     const allCustomerOrders = await prisma.shopify_store_order.findMany({
-//       where: {
-//         shop,
-//         OR: [
-//           safeEmail ? { customerEmail: safeEmail } : undefined,
-//           safeCustId ? { customerId: safeCustId } : undefined,
-//           safePhone ? { customerPhone: safePhone } : undefined,
-//           { shopifyOrderId: `gid://shopify/Order/${orderGid}` },
-//           { shopifyOrderId: orderGid }
-//         ].filter(Boolean)
-//       }
-//     });
-
-//     // ADDED: Scan past orders to extract the best available name
-//     const orderWithName = allCustomerOrders.find(o => o.firstName || o.lastName);
-//     if (orderWithName) {
-//       safeFirstName = safeFirstName || orderWithName.firstName;
-//       safeLastName = safeLastName || orderWithName.lastName;
-//     }
-
-//     let profile = {
-//       totalorders: allCustomerOrders.length,
-//       validOrderCount: 0,
-//       totalSpend: 0,
-//       fulfilledCount: 0,
-//       cancelledCount: 0,
-//       rtoCount: 0,
-//       codCount: 0,
-//       unpaidCount: 0,
-//       disputeCount: 0,
-//       refundCount: 0,
-//     };
-    
-//     allCustomerOrders.forEach(o => {
-//       const fStatus = o.financialStatus?.toUpperCase();
-//       const fulfillment = o.fulfillmentStatus?.toUpperCase();
-//       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
-      
-//       if (isCod) profile.codCount += 1;
-//       if (o.hasDispute) profile.disputeCount += 1;
-
-//       // Logistics Tracking
-//       if (o.cancelledAt || fulfillment === "CANCELLED") {
-//         profile.cancelledCount += 1;
-//       } else if (o.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
-//         profile.rtoCount += 1;
-//       } else if (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") {
-//         profile.fulfilledCount += 1;
-//       }
-      
-//      if (fStatus === "PENDING" && !isCod) profile.unpaidCount += 1;
-      
-//       if (fStatus === "REFUNDED" || fStatus === "PARTIALLY_REFUNDED") {
-//         profile.refundCount += 1;
-//       }
-
-//       // --- NET REVENUE GATEKEEPER ---
-//       const isEligibleForRevenue = (fStatus === "PAID" || fStatus === "PARTIALLY_REFUNDED") && 
-//                                    (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") && 
-//                                    !o.hasDispute && 
-//                                    !o.cancelledAt && 
-//                                    !o.isRTO;
-
-//       if (isEligibleForRevenue) {
-//         profile.validOrderCount += 1;
-//         const grossValue = Number(o.orderValue || 0);
-//         const refundedAmount = Number(o.totalRefundedAmount || 0); 
-//         const netValue = grossValue - refundedAmount;
-//         profile.totalSpend += netValue;
-//       }
-//     });
-
-//     // CALL THE HELPER FUNCTION HERE
-//     const { segment, riskReasons } = calculateRiskSegment(profile);
-
-   
-//     await prisma.zippyy_buyer_profile.upsert({
-//       where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
-//       update: { 
-//         ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
-//         firstName: safeFirstName, lastName: safeLastName
-//       },
-//       create: { 
-//         shop, buyerIdentifier, ...profile, buyerSegment: segment, riskReasons: riskReasons, customerEmail: safeEmail, customerPhone: safePhone, customerId: safeCustId,
-//         firstName: safeFirstName, lastName: safeLastName
-//       }
-//     });
-
-//     console.log(` [PROFILE UPDATER] Successfully updated profile for ${buyerIdentifier}`);
-//   } catch (error) {
-//     console.error("[PROFILE UPDATER ERROR]:", error);
-//   }
-// }
 
 /* ================= 1. HELPER: SEGMENTATION BRAIN (DRY) ================= */
+const SEGMENT_WEIGHTS = {
+  cancelWeight: 35,
+  disputeWeight: 50,
+  rtoWeight: 35,
+  abandonWeight: 25,
+  refundWeight: 25,
+  pendingPaymentPenalty: 20,
+  codAbuseWeight: 20,
+  loyaltyBonus: 5,
+  highCancelBonusPenalty: 20,
+  medCancelBonusPenalty: 10,
+  highRtoBonusPenalty: 15,
+  extremeAbandonPenalty: 35,
+  highAbandonPenalty: 20,
+  fraudDisputePenalty: 100,
+  openDisputePenalty: 40,
+  wonDisputePenalty: 15
+};
+
 export function calculateRiskSegment(profile) {
-  let reasons = [];
-  
-  // 1. Ensure we are working with strictly numbers
+  const reasons = [];
+
   const total = Number(profile.totalorders || profile.totalorderplaced) || 0;
   const rto = Number(profile.rtoCount) || 0;
   const cancelled = Number(profile.cancelledCount) || 0;
   const disputes = Number(profile.disputeCount) || 0;
-  const unpaid = Number(profile.unpaidCount) || 0; 
-  const cod = Number(profile.codCount) || 0;       
+  const unpaid = Number(profile.unpaidCount) || 0;
+  const cod = Number(profile.codCount) || 0;
+  const refund = Number(profile.refundCount) || 0;
   const fulfilled = Number(profile.fulfilledCount) || 0;
-  
-  // 2. THE COD SAFETY NET (From Logic 1)
-  let valid = Number(profile.validOrderCount) || 0; 
-  valid = Math.max(valid, fulfilled); 
+  const valid = Number(profile.validOrderCount) || 0;
+  const fraudDisputes = Number(profile.fraudDisputeCount) || 0;
+  const wonDisputes = Number(profile.wonDisputeCount) || 0;
+  const lostDisputes = Number(profile.lostDisputeCount) || 0;
 
-  // 3. SCALABLE RATES (From Logic 2)
-  const rtoRate = total > 0 ? rto / total : 0;
-  const cancelRate = total > 0 ? cancelled / total : 0;
-  const codRate = total > 0 ? cod / total : 0;
-
-  // 4. EXPLICIT BEHAVIORAL FLAGS (For the UI to display)
-  if (disputes > 0) reasons.push("Payment Dispute");
-  if (rto >= 2 && rtoRate >= 0.2) reasons.push("Frequent RTO");
-  if (cancelled >= 3 && cancelRate >= 0.4) reasons.push("High Cancellation Rate");
-  if (total >= 5 && valid === 0) reasons.push("Spam/Bot Behavior");
-  if (cod >= 3 && codRate >= 0.8 && valid === 0) reasons.push("High COD Abuse Risk");
-
- // 5. THE MATHEMATICAL ENGINE
-  let segment = "New";
-
-  if (total > 0) {
-    // If they have 5+ valid orders and a flawless fulfillment history, forgive all Unpaid/COD marks.
-    const isHighlyTrusted = (valid >= 5 && cancelled === 0 && rto === 0 && disputes === 0);
-
-    // Apply the forgiveness
-    const unforgivenUnpaid = isHighlyTrusted ? 0 : unpaid;
-    
-    // Calculate the base scores
-    const successScore = valid * 1.0;
-    const cancelPenalty = cancelled * 1.0;
-    const unpaidPenalty = unforgivenUnpaid * 0.5; 
-    const rtoPenalty = rto * 2.0;       
-    const disputePenalty = disputes * 5.0; 
-
-    const rawScore = successScore - cancelPenalty - unpaidPenalty - rtoPenalty - disputePenalty;
-
-    // Adjust the denominator so forgiven orders don't unfairly drag down their Trust Index
-    const forgivenUnpaid = unpaid - unforgivenUnpaid;
-    const effectiveTotal = Math.max(1, total - forgivenUnpaid); 
-    
-    const trustIndex = rawScore / effectiveTotal;
-
-    // Apply the Mathematical Tiers
-    if (total > 10 && valid === 0) {
-      segment = "High Risk";
-    }
-    else if (trustIndex < 0) {
-      const hasSevereOffense = rto > 0 || disputes > 0; 
-      
-      // Use unforgivenUnpaid here so trusted buyers don't accidentally fall into High Risk
-      if (hasSevereOffense || cancelled >= 2 || unforgivenUnpaid >= 3) {
-        segment = "High Risk";
-        if (reasons.length === 0) reasons.push(`High-Risk Individual`);
-      } else {
-        segment = "Watchlist";
-        if (reasons.length === 0) reasons.push("Needs Monitoring");
-      }
-    } 
-    else if (trustIndex >= 0.75 && valid >= 5) {
-      segment = "VIP";
-    } 
-    else if (trustIndex >= 0.30 && valid >= 3) {
-      segment = "Repeat Buyer";
-    } 
-    else if (trustIndex >= 0.0 && trustIndex < 0.30 && total == 1 || valid == 2) {
-      segment = "Watchlist";
-    }
+  if (total === 0) {
+    return {
+      segment: "New",
+      riskReasons: "New Customer (no order history)"
+    };
   }
 
-  return { 
-    segment: segment, 
-    riskReasons: reasons.length > 0 ? reasons.join(", ") : null 
+  const cancelRate = total > 0 ? cancelled / total : 0;
+  const rtoRate = total > 0 ? rto / total : 0;
+  const disputeRate = total > 0 ? disputes / total : 0;
+  const refundRate = total > 0 ? refund / total : 0;
+  const unpaidRate = total > 0 ? unpaid / total : 0;
+  const codRate = total > 0 ? cod / total : 0;
+  const successRate = total > 0 ? valid / total : 0;
+
+  let riskScore = 0;
+
+  if (fraudDisputes > 0) {
+    riskScore += SEGMENT_WEIGHTS.fraudDisputePenalty;
+    reasons.push("Known fraud dispute history");
+  }
+
+  if (disputes > 0) {
+    riskScore += SEGMENT_WEIGHTS.openDisputePenalty;
+    reasons.push("Dispute history detected");
+  }
+
+  if (lostDisputes > 0) {
+    riskScore += Math.round(disputeRate * SEGMENT_WEIGHTS.disputeWeight);
+    reasons.push(`Lost dispute history (${lostDisputes})`);
+  }
+
+  if (wonDisputes > 0 && lostDisputes === 0) {
+    riskScore += SEGMENT_WEIGHTS.wonDisputePenalty;
+    reasons.push("High chargeback friction buyer");
+  }
+
+  if (cancelled > 0) {
+    let cancelRisk = Math.round(cancelRate * SEGMENT_WEIGHTS.cancelWeight);
+    if (cancelled >= 10) cancelRisk += SEGMENT_WEIGHTS.highCancelBonusPenalty;
+    else if (cancelled >= 5) cancelRisk += SEGMENT_WEIGHTS.medCancelBonusPenalty;
+    riskScore += cancelRisk;
+    reasons.push(`Cancellation history: ${cancelled} orders`);
+  }
+
+  if (rto > 0) {
+    let rtoRisk = Math.round(rtoRate * SEGMENT_WEIGHTS.rtoWeight);
+    if (rto >= 5) rtoRisk += SEGMENT_WEIGHTS.highRtoBonusPenalty;
+    riskScore += rtoRisk;
+    reasons.push(`RTO history: ${rto} orders`);
+  }
+
+  if (total >= 5 && successRate <= 0.20) {
+    let abandonRisk = Math.round((1 - successRate) * SEGMENT_WEIGHTS.abandonWeight);
+    if (total >= 20 && valid <= 1) abandonRisk += SEGMENT_WEIGHTS.extremeAbandonPenalty;
+    else if (total >= 10 && valid === 0) abandonRisk += SEGMENT_WEIGHTS.highAbandonPenalty;
+    riskScore += abandonRisk;
+    reasons.push(`Low success rate: ${Math.round(successRate * 100)}%`);
+  }
+
+  if (refund > 0) {
+    riskScore += Math.round(refundRate * SEGMENT_WEIGHTS.refundWeight);
+    reasons.push(`Refund history: ${refund} orders`);
+  }
+
+  if (codRate >= 0.7 && rto >= 1 && total >= 3) {
+    riskScore += Math.round(codRate * SEGMENT_WEIGHTS.codAbuseWeight);
+    reasons.push("COD abuse suspicion");
+  }
+
+  if (unpaid > 0) {
+    riskScore += Math.round(unpaidRate * SEGMENT_WEIGHTS.pendingPaymentPenalty);
+    reasons.push(`Pending payment history: ${unpaid} orders`);
+  }
+
+  if (valid >= 3) {
+    const loyaltyDiscount = Math.min(30, valid * SEGMENT_WEIGHTS.loyaltyBonus);
+    riskScore -= loyaltyDiscount;
+    reasons.push(`Loyal buyer: ${valid} clean orders`);
+  }
+
+  riskScore = Math.max(0, Math.min(100, riskScore));
+
+  const trustRatio = total > 0 ? valid / total : 0;
+  const poorPerformanceRate = cancelRate + rtoRate + refundRate + unpaidRate;
+  const isLowSuccessLargeProfile = total >= 10 && valid <= 1;
+  const isHighRiskBySuccess = total >= 5 && trustRatio < 0.08;
+
+  let segment = "Watchlist";
+
+  if (valid >= 5 && cancelRate < 0.05 && rtoRate < 0.05 && disputes === 0 && refundRate < 0.05 && unpaidRate < 0.20) {
+    segment = "VIP";
+  } else if (isLowSuccessLargeProfile || riskScore >= 70 || isHighRiskBySuccess) {
+    segment = "High Risk";
+  } else if (valid >= 3 && trustRatio >= 0.35 && poorPerformanceRate < 0.45) {
+    segment = "Repeat Buyer";
+  } else if (valid >= 2 && trustRatio >= 0.25 && poorPerformanceRate < 0.55) {
+    segment = "Repeat Buyer";
+  } else {
+    segment = "Watchlist";
+  }
+
+  if (segment === "Watchlist" && total === 1 && valid === 0 && riskScore < 20) {
+    segment = "Watchlist";
+  }
+
+  return {
+    segment,
+    riskReasons: reasons.length > 0 ? reasons.join(", ") : null
   };
 }
 
