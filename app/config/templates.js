@@ -4,7 +4,7 @@
  */
 
 export const WHATSAPP_TEMPLATES = {
-  ORDER_CONFIRMATION: 'Order_delivery_confirmation',
+  ORDER_CONFIRMATION: 'rsm_order_confirmation',
   SHIPMENT_CREATED: 'in_shipment_created_wa_message',
   SHIPMENT_IN_TRANSIT: 'tracking_link_in_transit_new',
   SHIPMENT_OUT_FOR_DELIVERY_PREPAID: 'tracking_link_out_for_delivery_prepaid_new2',
@@ -17,6 +17,7 @@ export const WHATSAPP_TEMPLATES = {
 
 export const WHATSAPP_CAMPAIGNS = {
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment booked',
+  [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'rsm_order_confirmation',
 };
 
 export const TEMPLATE_DESCRIPTIONS = {
@@ -38,14 +39,23 @@ export function formatTemplateParams(templateId, data = {}) {
   const params = [];
 
   switch (templateId) {
+    // case WHATSAPP_TEMPLATES.ORDER_CONFIRMATION:
+    //   // Order template params
+    //   if (data.customerName) params.push(data.customerName);
+    //   if (data.sellerCompanyName) params.push(data.sellerCompanyName);
+    //   if (data.orderId) params.push(data.orderId);
+    //   if (data.productDetails) params.push(data.productDetails);
+    //   if (data.orderTotal) params.push(data.orderTotal);
+    //   break;
     case WHATSAPP_TEMPLATES.ORDER_CONFIRMATION:
-      // Order template params
-      if (data.orderId) params.push(data.orderId);
-      if (data.customerName) params.push(data.customerName);
-      if (data.orderDate) params.push(data.orderDate);
-      if (data.orderTotal) params.push(data.orderTotal);
+      params.push(String(data.customerName || 'Customer'));
+      params.push(String(data.sellerCompanyName || 'Zippyy'));
+      params.push(String(data.orderId || 'N/A'));
+      params.push(String(data.productDetails || 'Order Items'));
+      
+      const total = data.orderAmount || data.orderTotal || '0';
+      params.push(String(total));
       break;
-
     case WHATSAPP_TEMPLATES.SHIPMENT_CREATED:
       // Shipment created template expects exactly 6 parameters
       // {{1}} Customer Name, {{2}} Order Number, {{3}} Product Details, {{4}} Order Type, {{5}} Order Amount, {{6}} Seller/Brand Name

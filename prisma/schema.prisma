@@ -74,7 +74,7 @@ model shopify_store_order {
   isRTO             Boolean  @default(false)
 
   cancelledAt       DateTime?
-
+  customerReplies   CustomerReply[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   riskScore         zippyy_risk_score?
@@ -308,7 +308,23 @@ enum NotificationStatus {
   FAILED
   @@schema("risk_score_model")
 }
+model CustomerReply {
+  id                String               @id @default(cuid())
+  shop              String
+  orderId           String?
+  order             shopify_store_order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  
+  customerPhone     String
+  messageType       String   
+  messageBody       String   
+  providerMessageId String? @unique 
+  rawPayload        Json?    
+  isProcessed       Boolean @default(false) 
+  createdAt         DateTime @default(now())
 
+  @@index([shop, customerPhone])
+  @@index([orderId])
+}
 
 
 
