@@ -324,6 +324,7 @@ model CustomerReply {
 
   @@index([shop, customerPhone])
   @@index([orderId])
+  @@schema("risk_score_model")
 }
 
 

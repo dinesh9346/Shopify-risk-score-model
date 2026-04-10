@@ -26,6 +26,7 @@ export default function App() {
           <s-link href="/app/risk-engine">Risk Engine</s-link>
           <s-link href="/app/assessments">Order Assessments</s-link>
           <s-link href="/app/buyer-profile">Buyer Profiles</s-link>
+          <s-link href="/app/notifications">Notifications</s-link>
           <s-link href="/app/analytics">Analytics</s-link>
           <s-link href="/app/pricing">Pricing</s-link>   
         

@@ -1,61 +1,66 @@
 import fs from 'fs';
-import readline from 'readline';
+import csv from 'csv-parser';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function importPincodes() {
-  console.log("Starting PIN code import...");
-  
-  const fileStream = fs.createReadStream('IN.txt');
-  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+  console.log("Reading the CSV file...");
 
-  let batch = [];
+  // We use a Map to efficiently deduplicate PIN codes in memory
+  const uniquePincodes = new Map();
+
+  // Step 1: Parse the CSV and keep only unique PIN codes
+  await new Promise((resolve, reject) => {
+    fs.createReadStream('pincode.csv') 
+      .pipe(csv())
+      .on('data', (row) => {
+        // The government CSV headers are usually 'Pincode', 'OfficeName', etc.
+        const postalCode = row.Pincode || row.pincode || row.PINCODE;
+
+        // Only process valid 6-digit Indian PIN codes
+        if (postalCode && /^[1-9][0-9]{5}$/.test(postalCode)) {
+          
+          // If we haven't seen this PIN yet, save the first post office we find for it.
+          if (!uniquePincodes.has(postalCode)) {
+            uniquePincodes.set(postalCode, {
+              countryCode: "IN",
+              postalCode: postalCode,
+              placeName: row.OfficeName || row.officename || null,
+              state: row.StateName || row.statename || null,
+              district: row.District || row.district || null
+            });
+          }
+        }
+      })
+      .on('end', resolve)
+      .on('error', reject);
+  });
+
+  const allRecords = Array.from(uniquePincodes.values());
+  console.log(`Found ${allRecords.length} unique valid PIN codes. Starting database insert...`);
+
+  // Step 2: Push to the database in chunks of 2000
+  const chunkSize = 2000;
   let totalImported = 0;
 
-  for await (const line of rl) {
-    const columns = line.split('\t');
+  for (let i = 0; i < allRecords.length; i += chunkSize) {
+    const batch = allRecords.slice(i, i + chunkSize);
     
-    // GeoNames format: [0]Country, [1]PostalCode, [2]PlaceName, [3]State, [4]StateCode, [5]District
-    const postalCode = columns[1];
-    
-    // Only process valid 6-digit Indian PIN codes
-    if (/^[1-9][0-9]{5}$/.test(postalCode)) {
-      batch.push({
-        countryCode: "IN",
-        postalCode: postalCode,
-        placeName: columns[2] || null,
-        state: columns[3] || null,
-        district: columns[5] || null
-      });
-    }
-
-    // Push to database in chunks of 2000 to avoid overloading memory
-    if (batch.length >= 2000) {
-      await prisma.India_valid_pincodes.createMany({
-        data: batch,
-        skipDuplicates: true // GeoNames has multiple places per PIN, we just need the PIN to exist once
-      });
-      totalImported += batch.length;
-      console.log(`Imported ${totalImported} PIN codes...`);
-      batch = []; // Clear the batch
-    }
-  }
-
-  // Push any remaining records in the final batch
-  if (batch.length > 0) {
     await prisma.India_valid_pincodes.createMany({
       data: batch,
-      skipDuplicates: true
+      skipDuplicates: true // Acts as a final safety net
     });
+    
     totalImported += batch.length;
+    console.log(`Imported ${totalImported} / ${allRecords.length} PIN codes...`);
   }
 
-  console.log(`✅ Import Complete! Successfully saved ${totalImported} unique PIN codes to the database.`);
-  await prisma.$disconnect();
+  console.log(`Import Complete! Successfully saved ${totalImported} unique PIN codes to the database.`);
 }
 
-importPincodes().catch(e => {
-  console.error("Error during import:", e);
-  prisma.$disconnect();
-});
+importPincodes()
+  .catch(e => console.error("Error during import:", e))
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
