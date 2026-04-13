@@ -8,7 +8,7 @@ import { ViewIcon } from '@shopify/polaris-icons';
 import prisma from "../db.server"; 
 import { authenticate } from "../shopify.server"; 
 
-// --- 1. DEFAULT WEIGHTS ---
+// --- 1. DEFAULT WEIGHTS (Visible UI Settings Only) ---
 const DEFAULT_WEIGHTS = {
   invalidEmailPenalty: 40, guestCodPenalty: 15, shortNamePenalty: 30,
   missingEmailPenalty: 15, suspiciousTimingPenalty: 40, pendingPaymentPenalty: 20,
@@ -22,11 +22,7 @@ const DEFAULT_WEIGHTS = {
   hoardingPenalty: 30, emailFraudPenalty: 35, phoneFraudPenalty: 30,
   disputeWeight: 50, openDisputePenalty: 40, fraudHistoryPenalty: 100,
   
-  loyaltyBonus: 5,
-
-  addressFraudPenalty: 35, 
-  abandonWeight: 25, 
-  nonExistentPinPenalty: 80
+  loyaltyBonus: 5
 };
 
 // --- 2. LOADER ---
@@ -85,7 +81,7 @@ const WeightInput = ({ id, label, helpText, isBonus = false, formData, handleCha
         value={formData[id]}
         onChange={(val) => handleChange(val, id)}
         onBlur={() => handleBlur(id)}
-        onFocus={handleFocus} // <--- Added Focus Handler
+        onFocus={handleFocus}
         autoComplete="off"
         placeholder="0"
         suffix="pts"
@@ -116,7 +112,6 @@ export default function RiskEngineSettings() {
     );
   }, []);
 
-  // Fix for cursor jumping to end on focus
   const handleFocus = useCallback((event) => {
     const val = event.target.value;
     event.target.setSelectionRange(val.length, val.length);
@@ -125,7 +120,6 @@ export default function RiskEngineSettings() {
   const handleChange = useCallback((value, id) => {
     let cleanValue = value.replace(/[^\d]/g, '');
 
-    // Strips leading zeros but allows single "0"
     if (cleanValue.length > 1 && cleanValue.startsWith('0')) {
         cleanValue = cleanValue.replace(/^0+/, '');
     }
@@ -316,7 +310,6 @@ export default function RiskEngineSettings() {
     </Page>
   );
 }
-
 
 // import { useState, useCallback, useEffect } from "react";
 // import { useLoaderData, useSubmit, useNavigation, useActionData } from "react-router";

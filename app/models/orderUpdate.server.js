@@ -3,6 +3,23 @@ import { updateSingleBuyerProfile } from "./Sync.server.js";
 import { detectOrderStateChanges, updateStoredOrderState } from "./orderStateDetector.server.js";
 import { enqueueLifecycleNotification } from "./queue.server.js";
 
+function getProductDetailsFromPayload(payload) {
+  const items = payload?.line_items || payload?.lineItems || [];
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return items
+    .map(item => {
+      const quantity = item.quantity ?? item.qty ?? 1;
+      const title = item.title || item.name || item.product_name || "Item";
+      return `${quantity}x ${title}`;
+    })
+    .join(", ");
+}
+
+function getOrderTypeFromPayload(payload) {
+  const gateway = [payload?.gateway, ...(payload?.payment_gateway_names || [])].filter(Boolean).join(" ").toLowerCase();
+  return /cod|cash on delivery/.test(gateway) ? "COD" : "Prepaid";
+}
+
 export async function processOrderUpdate(shop, payload) {
   console.log(`[Order Update] Processing update for order: ${payload.id}`);
 
@@ -67,12 +84,21 @@ export async function processOrderUpdate(shop, payload) {
     const customerName = [payload.customer?.first_name, payload.customer?.last_name].filter(Boolean).join(' ') || 'Customer';
     const orderId = payload.admin_graphql_api_id;
 
+    const productDetails = getProductDetailsFromPayload(payload) || "Order Items";
+    const orderType = getOrderTypeFromPayload(payload);
+    const orderAmount = payload?.total_price ? parseFloat(payload.total_price) : payload?.subtotal_price ? parseFloat(payload.subtotal_price) : 0;
+    const sellerCompanyName = payload?.sellerCompanyName || payload?.shopName || shop || "Zippyy";
+
     for (const change of stateChanges) {
       try {
         await enqueueLifecycleNotification(shop, orderId, change.stage, {
           customerEmail,
           customerPhone,
           customerName,
+          productDetails,
+          orderType,
+          orderAmount,
+          sellerCompanyName,
           ...change.details
         });
         console.log(`[Order Update] Queued lifecycle notification: ${change.stage}`);

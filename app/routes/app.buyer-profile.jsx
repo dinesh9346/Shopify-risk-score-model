@@ -63,36 +63,32 @@ export const loader = async ({ request }) => {
     ];
   }
 
-  // 2. PARALLEL EXECUTION: Calculate Dashboard Stats & Fetch Profiles Instantly
-  const [
-    globalStats,
-    segmentGroupings,
-    profilesData
-  ] = await Promise.all([
-    prisma.zippyy_buyer_profile.aggregate({
-      where: { shop },
-      _sum: {
-        totalSpend: true,
-        validOrderCount: true,
-        totalorders: true,
-        fulfilledCount: true,
-        rtoCount: true,
-        cancelledCount: true,
-        unpaidCount: true
-      }
-    }),
-    prisma.zippyy_buyer_profile.groupBy({
-      by: ['buyerSegment'],
-      where: { shop },
-      _count: { buyerSegment: true }
-    }),
-    prisma.zippyy_buyer_profile.findMany({
-      where: profileWhere,
-      take: limit,
-      skip: skip,
-      orderBy: { totalorders: "desc" },
-    })
-  ]);
+  // 2. Avoid concurrent Prisma requests on low connection pools by running reads sequentially.
+  const globalStats = await prisma.zippyy_buyer_profile.aggregate({
+    where: { shop },
+    _sum: {
+      totalSpend: true,
+      validOrderCount: true,
+      totalorders: true,
+      fulfilledCount: true,
+      rtoCount: true,
+      cancelledCount: true,
+      unpaidCount: true
+    }
+  });
+
+  const segmentGroupings = await prisma.zippyy_buyer_profile.groupBy({
+    by: ['buyerSegment'],
+    where: { shop },
+    _count: { buyerSegment: true }
+  });
+
+  const profilesData = await prisma.zippyy_buyer_profile.findMany({
+    where: profileWhere,
+    take: limit,
+    skip: skip,
+    orderBy: { totalorders: "desc" },
+  });
 
   const segmentCounts = { VIP: 0, "Repeat Buyer": 0, Watchlist: 0, New: 0, "High Risk": 0 };
   segmentGroupings.forEach(group => {

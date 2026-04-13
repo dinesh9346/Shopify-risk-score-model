@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 
-function modifyDatabaseUrl(url, connectionLimit = 5) {
+function modifyDatabaseUrl(url, connectionLimit = 1) {
   if (!url) return url;
   // Remove existing connection_limit if present
   const urlWithoutLimit = url.replace(/[?&]connection_limit=\d+/, '');
@@ -10,28 +10,20 @@ function modifyDatabaseUrl(url, connectionLimit = 5) {
   return `${urlWithoutLimit}${separator}connection_limit=${connectionLimit}`;
 }
 
-if (process.env.NODE_ENV !== "production") {
-  if (!global.prismaGlobal) {
-    const modifiedUrl = modifyDatabaseUrl(process.env.DATABASE_URL, 5);
+const connectionLimit = process.env.NODE_ENV === "production" ? 5 : 1;
+const databaseUrl = modifyDatabaseUrl(process.env.DATABASE_URL, connectionLimit);
 
-    global.prismaGlobal = new PrismaClient({
-      datasources: {
-        db: {
-          url: modifiedUrl,
-        },
-      },
-      log: [],
-    });
-  }
-}
-
-const prisma = global.prismaGlobal ?? new PrismaClient({
+const prisma = globalThis.prisma ?? new PrismaClient({
   datasources: {
     db: {
-      url: modifyDatabaseUrl(process.env.DATABASE_URL, 5),
+      url: databaseUrl,
     },
   },
   log: [],
 });
+
+if (process.env.NODE_ENV !== "production") {
+  globalThis.prisma = prisma;
+}
 
 export default prisma;

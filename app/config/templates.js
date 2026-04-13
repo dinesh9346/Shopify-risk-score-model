@@ -31,51 +31,57 @@ export const TEMPLATE_DESCRIPTIONS = {
   [WHATSAPP_TEMPLATES.NDR_VERIFICATION]: 'NDR verification request',
 };
 
+const TEMPLATE_PARAM_ORDER = {
+  [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: [
+    'customerName',
+    'sellerCompanyName',
+    'orderId',
+    'productDetails',
+    'orderAmount'
+  ],
+  [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: [
+    'customerName',
+    'orderId',
+    'productDetails',
+    'orderType',
+    'orderAmount',
+    'sellerCompanyName'
+  ],
+  [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: [
+    'customerName',
+    'orderId',
+    'productDetails',
+    'orderType',
+    'sellerCompanyName'
+  ]
+};
+
+const DEFAULT_TEMPLATE_VALUES = {
+  customerName: 'Customer',
+  sellerCompanyName: 'Zippyy',
+  orderId: 'N/A',
+  productDetails: 'Order Items',
+  orderType: 'Standard',
+  orderAmount: '0'
+};
+
 /**
  * Map MyOperator template parameters to our payload
  * MyOperator expects specific field names for template parameters
  */
 export function formatTemplateParams(templateId, data = {}) {
   const params = [];
+  const orderedFields = TEMPLATE_PARAM_ORDER[templateId];
+
+  if (orderedFields) {
+    for (const field of orderedFields) {
+      const value = data[field] ?? DEFAULT_TEMPLATE_VALUES[field] ?? '';
+      params.push(String(value));
+    }
+    return params;
+  }
 
   switch (templateId) {
-    // case WHATSAPP_TEMPLATES.ORDER_CONFIRMATION:
-    //   // Order template params
-    //   if (data.customerName) params.push(data.customerName);
-    //   if (data.sellerCompanyName) params.push(data.sellerCompanyName);
-    //   if (data.orderId) params.push(data.orderId);
-    //   if (data.productDetails) params.push(data.productDetails);
-    //   if (data.orderTotal) params.push(data.orderTotal);
-    //   break;
-    case WHATSAPP_TEMPLATES.ORDER_CONFIRMATION:
-      params.push(String(data.customerName || 'Customer'));
-      params.push(String(data.sellerCompanyName || 'Zippyy'));
-      params.push(String(data.orderId || 'N/A'));
-      params.push(String(data.productDetails || 'Order Items'));
-      
-      const total = data.orderAmount || data.orderTotal || '0';
-      params.push(String(total));
-      break;
-    case WHATSAPP_TEMPLATES.SHIPMENT_CREATED:
-      // Shipment created template expects exactly 6 parameters
-      // {{1}} Customer Name, {{2}} Order Number, {{3}} Product Details, {{4}} Order Type, {{5}} Order Amount, {{6}} Seller/Brand Name
-      if (data.customerName) params.push(data.customerName);
-      if (data.orderId) params.push(data.orderId);
-      if (data.productDetails) params.push(data.productDetails);
-      if (data.orderType) params.push(data.orderType);
-      if (data.orderAmount) params.push(String(data.orderAmount)); // Convert to string for consistency
-      if (data.sellerCompanyName) params.push(data.sellerCompanyName);
-      break;
-
-    case WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED:
-      // Updated to match actual template: customer_name, order_number, product_details, order_type, seller_company_name
-      if (data.customerName) params.push(data.customerName);
-      if (data.orderId) params.push(data.orderId);
-      if (data.productDetails) params.push(data.productDetails);
-      if (data.orderType) params.push(data.orderType);
-      if (data.sellerCompanyName) params.push(data.sellerCompanyName);
-      break;
-
     case WHATSAPP_TEMPLATES.NDR_VERIFICATION:
       if (data.trackingId) params.push({ type: 'text', text: data.trackingId });
       if (data.ndrCode) params.push({ type: 'text', text: data.ndrCode });
@@ -85,6 +91,12 @@ export function formatTemplateParams(templateId, data = {}) {
       // Generic template params
       if (data.components?.length) {
         return data.components;
+      }
+      if (Array.isArray(data.templateParams)) {
+        return data.templateParams;
+      }
+      if (Object.keys(data).length) {
+        return Object.values(data).map(value => String(value));
       }
   }
 

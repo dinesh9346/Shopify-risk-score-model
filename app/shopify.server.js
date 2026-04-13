@@ -35,33 +35,55 @@ const shopify = shopifyApp({
     },
   },
 
-
 hooks: {
   afterAuth: async ({ admin, session }) => {
-
     const shop = session.shop;
 
     console.log(`\n[AUTH] afterAuth hook triggered for: ${shop}`);
 
     try {
-      // Register webhooks
+      // 1. FETCH MERCHANT EMAIL VIA GRAPHQL
+      // We do this first to ensure our Session table is populated for reports
+      const response = await admin.graphql(
+        `#graphql
+        query getShopEmail {
+          shop {
+            email
+            contactEmail
+          }
+        }`
+      );
+      
+      const shopData = await response.json();
+      const merchantEmail = shopData.data?.shop?.email || shopData.data?.shop?.contactEmail;
+
+      if (merchantEmail) {
+        await prisma.session.update({
+          where: { id: session.id },
+          data: { email: merchantEmail },
+        });
+        console.log(`[AUTH] Successfully saved email for ${shop}: ${merchantEmail}`);
+      }
+
+      // 2. REGISTER WEBHOOKS 
       const result = await shopify.registerWebhooks({ session });
       console.log("Webhook registration result:", result);
 
     } catch (error) {
-      console.error(`[AUTH] Error during afterAuth for ${shop}:`, error);
-      // Don't throw - let auth complete even if webhooks/sync fail
+      console.error(`[AUTH] Error during afterAuth data fetching/webhooks for ${shop}:`, error);
+      // We don't throw here so the merchant can still enter the app if a non-critical sync fails
     }
 
+    // 3. BULK SYNC LOGIC 
     const orderCount = await prisma.shopify_store_order.count({
       where: { shop },
     });
 
     if (orderCount === 0) {
-      console.log(` First install detected for ${shop}. Starting bulk sync...`);
+      console.log(`[AUTH] First install detected for ${shop}. Starting bulk sync...`);
       await triggerBulkOrderSync(admin, shop);
     } else {
-      console.log(` Orders already synced for ${shop}. Skipping bulk sync.`);
+      console.log(`[AUTH] Orders already synced for ${shop}. Skipping bulk sync.`);
     }
   },
 },

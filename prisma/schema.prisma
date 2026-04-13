@@ -181,50 +181,52 @@ model merchant_feedback {
   @@schema("risk_score_model")
 }
 
-// Add this model to your schema.prisma
 model zippyy_risk_settings {
-  id                    String   @id @default(uuid())
-  shop                  String   @unique
-  guestCodPenalty       Int      @default(15)
-  shortNamePenalty      Int      @default(30)
-  missingAddressPenalty Int      @default(30)
-  missingHouseNoPenalty Int      @default(25)
-  cancelWeight          Int      @default(35)
-  disputeWeight         Int      @default(50)
-  rtoWeight             Int      @default(35)
-  abandonWeight         Int      @default(25)
-  zeroValuePenalty      Int      @default(25)
-  refundWeight          Int      @default(25)
-  pendingPaymentPenalty Int      @default(20)
-  codAbuseWeight        Int      @default(20)
-  valueAnomalyPenalty   Int      @default(15)
-  loyaltyBonus          Int      @default(5)
-  addressFraudPenalty   Int      @default(35)
-  phoneFraudPenalty     Int      @default(30)
-  hoardingHighPenalty   Int      @default(30)
-  hoardingMedPenalty    Int      @default(15)
-  openDisputePenalty    Int      @default(40)
-  fraudHistoryPenalty   Int      @default(100)
-  invalidEmailFormatPenalty Int  @default(30)
-  invalidEmailDomainPenalty Int  @default(40)
-  missingEmailPenalty   Int      @default(15)
-  suspiciousTimingPenalty Int    @default(40)
-  invalidPinFormatPenalty Int    @default(80)
-  nonExistentPinPenalty Int      @default(80)
-  incompletePostalCodePenalty Int @default(80)
-  fakePostalCodePenalty Int      @default(80)
-  fakeAddressPenalty    Int      @default(80)
-  wonDisputePenalty     Int      @default(15)
-  highCancelBonusPenalty Int     @default(20)
-  medCancelBonusPenalty Int      @default(10)
-  highRtoBonusPenalty   Int      @default(15)
-  extremeAbandonPenalty Int      @default(35)
-  highAbandonPenalty    Int      @default(20)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                        String   @id @default(uuid())
+  shop                      String   @unique
+  
+  // --- STORE CONFIGURATION ---
+  timezone                  String   @default("Asia/Kolkata")
+
+  // --- IDENTITY & CHECKOUT ---
+  invalidEmailPenalty       Int      @default(40)  
+  guestCodPenalty           Int      @default(15)
+  shortNamePenalty          Int      @default(30)
+  missingEmailPenalty       Int      @default(15)
+  suspiciousTimingPenalty   Int      @default(40)
+  pendingPaymentPenalty     Int      @default(20)
+
+  // --- ADDRESS & LOGISTICS ---
+  invalidPostalCodePenalty  Int      @default(80)  
+  missingAddressPenalty     Int      @default(30)
+  missingHouseNoPenalty     Int      @default(25)
+  fakeAddressPenalty        Int      @default(80)
+
+  // --- HISTORICAL BEHAVIOR ---
+  cancelWeight              Int      @default(35)
+  rtoWeight                 Int      @default(35)
+  refundWeight              Int      @default(25)
+  zeroValuePenalty          Int      @default(25)
+  codAbuseWeight            Int      @default(20)
+  valueAnomalyPenalty       Int      @default(15)
+
+  // --- FRAUD NETWORKS & DISPUTES ---
+  hoardingPenalty           Int      @default(30)  
+  emailFraudPenalty         Int      @default(35)  
+  phoneFraudPenalty         Int      @default(30)
+  disputeWeight             Int      @default(50)
+  openDisputePenalty        Int      @default(40)
+  fraudHistoryPenalty       Int      @default(100)
+
+  // --- REWARDS ---
+  loyaltyBonus              Int      @default(5)
+
+  // --- TIMESTAMPS ---
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
   @@schema("risk_score_model")
 }
-
 model India_valid_pincodes {
   id          String   @id @default(cuid())
   countryCode String   @default("IN")

@@ -13,11 +13,11 @@ api_version = "2026-04"
 
   [[webhooks.subscriptions]]
   topics = [ "fulfillments/update" ]
-  uri = "/webhooks/fulfillments"
+  uri = "/webhooks/fulfillments/updated"
 
   [[webhooks.subscriptions]]
   topics = [ "fulfillments/create" ]
-  uri = "/webhooks/fulfillments"
+  uri = "/webhooks/fulfillments/create"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]

@@ -2,6 +2,7 @@ import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageComm
 import { NotificationService } from "../models/notification.server.js";
 import { WHATSAPP_TEMPLATES } from "../config/templates.js";
 // 1. IMPORT YOUR DEDICATED SERVICE FILES
+ import { generateAndSendMerchantReport } from "../utils/merchantReport.server.js";
 import { handleBulkFinishWebhook } from "./bulkWebhook.server.js";
 import { calculateAndApplyRiskScore } from "./riskAssessment.server.js";
 import { processOrderUpdate } from "./orderUpdate.server.js";
@@ -209,6 +210,31 @@ export async function enqueueLifecycleNotification(shop, orderId, stage, orderDa
     console.log(` [LIFECYCLE PRODUCER] Queued ${stage} notification for ${orderId}`);
   } catch (error) {
     console.error(` [LIFECYCLE PRODUCER ERROR] Failed to queue ${stage}:`, error);
+    throw error;
+  }
+}
+// NEW: Enqueue Weekly/Monthly Report Generation
+export async function enqueueMerchantReport(shop, reportType = "weekly") {
+  const safeShop = shop || "unknown-shop";
+
+  const params = {
+    QueueUrl: OUTBOUND_QUEUE_URL,
+    MessageBody: JSON.stringify({
+      taskType: "MERCHANT_REPORT",
+      shop,
+      reportType, // "weekly" or "monthly"
+      timestamp: new Date().toISOString()
+    }),
+    MessageGroupId: safeShop,
+    // Ensure we only queue one report of this type per shop per day to avoid spam
+    MessageDeduplicationId: `report-${safeShop}-${reportType}-${new Date().toISOString().split('T')[0]}` 
+  };
+
+  try {
+    await sqsClient.send(new SendMessageCommand(params));
+    console.log(` [OUTBOUND PRODUCER] Queued ${reportType} report for ${shop}`);
+  } catch (error) {
+    console.error(` [OUTBOUND PRODUCER ERROR] Failed to queue report:`, error);
     throw error;
   }
 }
@@ -511,7 +537,20 @@ export async function startOutboundQueueListener() {
             // Execute all lifecycle notification tasks
             await Promise.allSettled(tasks);
           }
+        // ROUTE 4: GENERATE AND SEND MERCHANT REPORTS (NEW)
+          else if (taskType === "MERCHANT_REPORT") {
+            const { shop, reportType } = payload;
+            console.log(` [OUTBOUND CONSUMER] Processing ${reportType} report for ${shop}`);
+          
+            
+            await generateAndSendMerchantReport(shop, reportType);
+          }
 
+          // If successful (any route), delete the message!
+          await sqsClient.send(new DeleteMessageCommand({
+            QueueUrl: OUTBOUND_QUEUE_URL,
+            ReceiptHandle: message.ReceiptHandle,
+          }));
           // If successful (any route), delete the message!
           await sqsClient.send(new DeleteMessageCommand({
             QueueUrl: OUTBOUND_QUEUE_URL,

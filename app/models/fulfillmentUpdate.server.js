@@ -5,6 +5,38 @@ import { enqueueLifecycleNotification } from "./queue.server.js";
 const normalize = (value) =>
   (value || "").toString().trim().toLowerCase().replace(/\s+/g, "_").replace(/-+/g, "_");
 
+function extractProductDetails(payload, previousOrder) {
+  const items = payload?.line_items || payload?.lineItems || [];
+  if (Array.isArray(items) && items.length > 0) {
+    return items
+      .map(item => {
+        const quantity = item.quantity ?? item.qty ?? 1;
+        const title = item.title || item.name || item.product_name || "Item";
+        return `${quantity}x ${title}`;
+      })
+      .join(", ");
+  }
+
+  if (previousOrder?.lineItemsData) {
+    try {
+      const parsed = JSON.parse(previousOrder.lineItemsData);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+          .map(item => {
+            const quantity = item.quantity ?? item.qty ?? 1;
+            const title = item.title || item.name || item.product_name || "Item";
+            return `${quantity}x ${title}`;
+          })
+          .join(", ");
+      }
+    } catch (e) {
+      // Ignore parse errors and fallback to default
+    }
+  }
+
+  return null;
+}
+
 const RTO_STATUSES = new Set([
   "failure",
   "failed",
@@ -125,7 +157,9 @@ export async function processFulfillmentUpdate(a, b, c) {
           customerEmail: true,
           customerPhone: true,
           firstName: true,
-          lastName: true
+          lastName: true,
+          lineItemsData: true,
+          orderValue: true
         }
       });
     }
@@ -156,12 +190,19 @@ export async function processFulfillmentUpdate(a, b, c) {
         const customerName = [previousOrder.firstName, previousOrder.lastName].filter(Boolean).join(' ') || 'Customer';
 
         // Map specific statuses to lifecycle notifications
+        const productDetails = extractProductDetails(payload, previousOrder) || "Order Items";
+        const orderAmount = previousOrder?.orderValue ? Number(previousOrder.orderValue) : 0;
+        const sellerCompanyName = payload?.sellerCompanyName || previousOrder?.sellerCompanyName || shop || "Zippyy";
+
         if (fulfillmentStatus === "fulfilled" || fulfillmentStatus === "success") {
           await enqueueLifecycleNotification(shop, orderGid, "DELIVERED", {
-            customerEmail, customerPhone, customerName,
-            productDetails: "Order Items",
+            customerEmail,
+            customerPhone,
+            customerName,
+            productDetails,
             orderType: "Standard",
-            sellerCompanyName: "Zippyy",
+            orderAmount,
+            sellerCompanyName,
             trackingId: trackingNumber || "N/A"
           });
         } else if (fulfillmentStatus?.toLowerCase().includes("in_transit")) {
