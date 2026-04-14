@@ -470,7 +470,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         if (cancelledCount >= 10) cancelRiskCalc += SYSTEM_CONSTANTS.highCancelBonusPenalty; 
         else if (cancelledCount >= 5) cancelRiskCalc += SYSTEM_CONSTANTS.medCancelBonusPenalty;
         riskPercentage += cancelRiskCalc;
-        reasons.push({ description: `High Cancellation: ${cancelledCount} orders cancelled out of ${totalOrders} orders.`, sentiment: "NEGATIVE" });
+        reasons.push({ description: `Cancellation: ${cancelledCount} orders cancelled out of ${totalOrders} orders.`, sentiment: "NEGATIVE" });
       }
 
       // RTO Volume
@@ -479,7 +479,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         // Uses FIXED SYSTEM CONSTANT
         if (rtoCount >= 5) rtoRiskCalc += SYSTEM_CONSTANTS.highRtoBonusPenalty;
         riskPercentage += rtoRiskCalc;
-        reasons.push({ description: `High RTO Rate: ${rtoCount} orders marked as RTO out of ${totalOrders} orders.`, sentiment: "NEGATIVE" });
+        reasons.push({ description: `RTO Rate: ${rtoCount} orders marked as RTO out of ${totalOrders} orders.`, sentiment: "NEGATIVE" });
       }
 
       // Serial Abandoner 
@@ -590,12 +590,24 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
     await updateSingleBuyerProfile(shop, customerEmail, customerPhone, customerId, orderGid);
     
+   // shopSettings was already defined in Step 5 of your code!
     await prisma.zippyy_risk_score.upsert({
       where: { orderId: storeOrderId },
-      update: { score, riskLevel, reasons: reasons.map(r => r.description).join(" | ") },
-      create: { shop, orderId: storeOrderId, score, riskLevel, reasons: reasons.map(r => r.description).join(" | ") }
+      update: { 
+        score, 
+        riskLevel, 
+        reasons: reasons.map(r => r.description).join(" | "),
+        settingsSnapshot: shopSettings 
+      },
+      create: { 
+        shop, 
+        orderId: storeOrderId, 
+        score, 
+        riskLevel, 
+        reasons: reasons.map(r => r.description).join(" | "),
+        settingsSnapshot: shopSettings 
+      }
     });
-
     const riskFacts = reasons.map(r => ({ description: r.description, sentiment: r.sentiment || "NEUTRAL" }));
     await enqueueOutboundRisk(shop, orderGid, score, riskLevel, riskFacts);
 

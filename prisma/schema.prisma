@@ -25,6 +25,7 @@ model Session {
   emailVerified Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+  lastSyncPeriod   Int?      @default(0) // Stores 3, 6, 9, or 0
   @@schema("risk_score_model")
 }
 
@@ -105,7 +106,7 @@ model zippyy_risk_score {
   score     Int
   riskLevel RiskLevel
   reasons   String
-
+  settingsSnapshot Json? // Stores the risk settings used at the time of scoring for auditability
   createdAt DateTime @default(now())
 
   @@index([shop, orderId])
@@ -119,7 +120,18 @@ enum RiskLevel {
   HIGH
   @@schema("risk_score_model")
 }
+model zippyy_ml_training_data {
+  id                 String   @id @default(cuid())
+  shop               String
+  
+  orderId            String   @unique 
 
+  createdAt          DateTime @default(now()) 
+  updatedAt          DateTime @updatedAt      
+
+  @@index([shop])
+  @@schema("risk_score_model")
+}
 model zippyy_buyer_profile {
   id                    String   @id @default(uuid())
   shop                  String

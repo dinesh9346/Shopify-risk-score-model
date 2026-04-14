@@ -9,9 +9,19 @@ function isEligibleForRevenueOrder(fStatus, fulfillment, hasDispute, disputeCoun
          !cancelledAt &&
          !isRTO;
 }
+// Add monthsBack as an optional parameter
+export async function triggerBulkOrderSync(admin, shop, monthsBack = null) {
+  console.log(`[BULK SYNC] Starting bulk order sync for ${shop}. Timeframe: ${monthsBack ? `${monthsBack} months` : 'All time'}`);
 
-export async function triggerBulkOrderSync(admin, shop) {
-  console.log(`[BULK SYNC] Starting bulk order sync for ${shop}`);
+  // 1. Calculate the cutoff date if a timeframe is selected
+  let queryFilter = "";
+  if (monthsBack) {
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - monthsBack);
+    // Format to ISO string which Shopify GraphQL expects
+    const formattedDate = cutoffDate.toISOString(); 
+    queryFilter = `(query: "created_at:>='${formattedDate}'")`;
+  }
 
   try {
     const response = await admin.graphql(`
@@ -19,7 +29,8 @@ export async function triggerBulkOrderSync(admin, shop) {
         bulkOperationRunQuery(
           query: """
           {
-            orders {
+            # 2. Inject the query filter dynamically here
+            orders${queryFilter} { 
               edges {
                 node {
                   id
