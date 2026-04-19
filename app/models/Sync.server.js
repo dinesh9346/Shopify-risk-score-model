@@ -284,6 +284,7 @@ export async function buildHistoricalBuyerProfiles(shop) {
 
     const fStatus = order.financialStatus?.toUpperCase();
     const fulfillment = order.fulfillmentStatus?.toUpperCase();
+    const shipment = (order.shipmentStatus || "").toUpperCase();
     const isCod = order.paymentGateway?.toLowerCase().includes("cod") || order.paymentGateway?.toLowerCase().includes("cash");
     
     if (isCod) profile.codCount += 1;
@@ -295,7 +296,21 @@ export async function buildHistoricalBuyerProfiles(shop) {
 
     if (order.cancelledAt || fulfillment === "CANCELLED") {
       profile.cancelledCount += 1;
-    } else if (order.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
+    } else if (
+      order.isRTO || 
+      fulfillment === "RETURNED" || 
+      fulfillment === "RESTOCKED" || 
+      fStatus === "REFUNDED" || 
+      shipment === "RTO" || 
+      shipment === "RETURN_TO_ORIGIN" || 
+      shipment === "RETURNED" || 
+      shipment === "FAILURE" || 
+      shipment === "FAILED" || 
+      shipment === "UNDELIVERED" || 
+      shipment === "DELIVERY_FAILED" ||
+      shipment === "LOST" ||
+      shipment === "EXCEPTION"
+    ) {
       profile.rtoCount += 1;
     }
 
@@ -461,6 +476,7 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     allCustomerOrders.forEach(o => {
       const fStatus = o.financialStatus?.toUpperCase();
       const fulfillment = o.fulfillmentStatus?.toUpperCase();
+      const shipment = (o.shipmentStatus || "").toUpperCase();
       const isCod = o.paymentGateway?.toLowerCase().includes("cod") || o.paymentGateway?.toLowerCase().includes("cash");
       
       if (isCod) profile.codCount += 1;
@@ -494,7 +510,21 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       // Logistics Tracking
       if (o.cancelledAt || fulfillment === "CANCELLED") {
         profile.cancelledCount += 1;
-      } else if (o.isRTO || fulfillment === "RETURNED" || fulfillment === "RESTOCKED" || fStatus === "REFUNDED") {
+      } else if (
+        o.isRTO || 
+        fulfillment === "RETURNED" || 
+        fulfillment === "RESTOCKED" || 
+        fStatus === "REFUNDED" || 
+        shipment === "RTO" || 
+        shipment === "RETURN_TO_ORIGIN" || 
+        shipment === "RETURNED" || 
+        shipment === "FAILURE" || 
+        shipment === "FAILED" || 
+        shipment === "UNDELIVERED" || 
+        shipment === "DELIVERY_FAILED" ||
+        shipment === "LOST" ||
+        shipment === "EXCEPTION"
+      ) {
         profile.rtoCount += 1;
       } else if (fulfillment === "FULFILLED" || fulfillment === "SUCCESS" || fulfillment === "DELIVERED") {
         profile.fulfilledCount += 1;

@@ -26,10 +26,23 @@ export async function processOrderUpdate(shop, payload) {
   try {
     // 1. DETECT STATE CHANGES (Before updating the database)
     const stateChanges = await detectOrderStateChanges(shop, payload);
-    
-    const isRtoStatus = ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) || 
-               payload.financial_status?.toLowerCase() === "refunded";
-    
+
+    // FETCH EXISTING ORDER FIRST TO NOT OVERWRITE isRTO blindly
+    const existingOrder = await prisma.shopify_store_order.findUnique({
+      where: { shop_shopifyOrderId: { shop, shopifyOrderId: payload.admin_graphql_api_id } },
+      select: { isRTO: true, shipmentStatus: true }
+    });
+
+    const isRtoStatusPayload = ["returned", "restocked", "refunded"].includes(payload.fulfillment_status?.toLowerCase()) ||
+      payload.financial_status?.toLowerCase() === "refunded";
+
+    const isShipmentRto = existingOrder?.shipmentStatus
+      ? ["failure", "failed", "returned", "return_to_origin", "undelivered", "attempted_delivery", "delivery_failed", "not_delivered", "lost", "canceled", "cancelled", "exception"].includes(existingOrder.shipmentStatus.toLowerCase())
+      : false;
+
+    // Use existing isRTO if true, or shipment status, or payload status
+    const isRtoStatus = existingOrder?.isRTO || isShipmentRto || isRtoStatusPayload;
+
     // 2. UPDATE THE DATABASE
     await prisma.shopify_store_order.upsert({
       where: {
@@ -54,7 +67,7 @@ export async function processOrderUpdate(shop, payload) {
         shop: shop,
         shopifyOrderId: payload.admin_graphql_api_id,
         // orderValue is REQUIRED in your schema, so we extract total_price from the webhook
-        orderValue: payload.total_price ? parseFloat(payload.total_price) : 0, 
+        orderValue: payload.total_price ? parseFloat(payload.total_price) : 0,
         customerEmail: payload.email || payload.customer?.email || null,
         customerPhone: payload.shipping_address?.phone || payload.customer?.phone || null,
         customerId: payload.customer?.id ? `gid://shopify/Customer/${payload.customer.id}` : null,
@@ -130,7 +143,7 @@ export async function processOrderUpdate(shop, payload) {
 export async function syncCustomerProfile(shop, customerPayload) {
   try {
     const customerId = String(customerPayload.id);
-    
+
     if (!customerId || customerId === 'undefined') {
       return { success: false, error: "Invalid customer ID in payload" };
     }
@@ -150,7 +163,7 @@ export async function syncCustomerProfile(shop, customerPayload) {
     // Determine buyerIdentifier consistently with other parts of the system
     // Prioritize: customerId > email > phone > fallback
     let buyerIdentifier = customerId;
-    
+
     // Check if a profile already exists with any of this customer's identifiers
     const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
       where: {
@@ -163,20 +176,20 @@ export async function syncCustomerProfile(shop, customerPayload) {
         ].filter(Boolean)
       }
     });
-    
+
     if (existingProfile) {
       buyerIdentifier = existingProfile.buyerIdentifier;
     }
 
     // Upsert into Prisma using the new table name: zippyy_buyer_profile
     const profile = await prisma.zippyy_buyer_profile.upsert({
-      where: { shop_buyerIdentifier: { shop, buyerIdentifier } }, 
+      where: { shop_buyerIdentifier: { shop, buyerIdentifier } },
       update: {
         customerEmail: email,
         firstName: firstName,
         lastName: lastName,
         customerPhone: phone,
-        
+
         // Re-added location fields so they update if the customer changes their default address
         shippingAddress1: address1,
         shippingCountry: country,
@@ -187,30 +200,30 @@ export async function syncCustomerProfile(shop, customerPayload) {
       },
       create: {
         shop: shop,
-        buyerIdentifier: buyerIdentifier, 
+        buyerIdentifier: buyerIdentifier,
         customerId: customerId,
         customerEmail: email,
         firstName: firstName,
         lastName: lastName,
         customerPhone: phone,
 
-        
+
         shippingAddress1: address1,
         shippingCountry: country,
         billingCountry: country,
 
         buyerSegment: accountState === 'disabled' ? 'Watchlist' : 'New',
         riskReasons: accountState === 'disabled' ? 'Account Disabled by Merchant' : null,
-        
+
         // Metric Defaults mapped to schema names
-        totalorders: 0,       
-        validOrderCount: 0, 
-        totalSpend: 0.0,      
+        totalorders: 0,
+        validOrderCount: 0,
+        totalSpend: 0.0,
         fulfilledCount: 0,
-        cancelledCount: 0, 
-        rtoCount: 0, 
-        codCount: 0, 
-        unpaidCount: 0, 
+        cancelledCount: 0,
+        rtoCount: 0,
+        codCount: 0,
+        unpaidCount: 0,
         disputeCount: 0,
         refundCount: 0
       }

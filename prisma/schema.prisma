@@ -102,7 +102,7 @@ model zippyy_risk_score {
 
   orderId   String   @unique
   order     shopify_store_order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
+  assessmentMethod String   @default("MANUAL") // Will save as "MANUAL" or "AUTO (ML)"
   score     Int
   riskLevel RiskLevel
   reasons   String
@@ -123,13 +123,41 @@ enum RiskLevel {
 model zippyy_ml_training_data {
   id                 String   @id @default(cuid())
   shop               String
-  
   orderId            String   @unique 
+
+  // --- Snapshot of 20 ML Features ---
+  customer_zipcode             String?
+  order_type                   String?
+  order_value_bin              String?
+  email_domain                 String?
+  order_month                  Int?
+  is_weekend                   Int?
+  is_night                     Int?
+  is_holiday_season            Int?
+  is_rainy_season              Int?
+  customer_return_rate         Float?
+  customer_order_frequency     Float?
+  is_new_customer              Int?
+  zipcode_order_volume         Int?
+  zipcode_return_rate          Float?
+  zipcode_monthly_return_rate  Float?
+  is_address_valid             Int?
+  is_email_domain_valid        Int?
+  customer_cancel_rate         Float?
+  customer_success_rate        Float?
+  hoarding_count               Int?
+
+  // --- Outcomes (Terminal States) ---
+  isRTO              Boolean  @default(false)
+  isDelivered        Boolean  @default(false)
+  isDispute          Boolean  @default(false)
+  isTerminal         Boolean  @default(false) // Set to true when one of the above happens
 
   createdAt          DateTime @default(now()) 
   updatedAt          DateTime @updatedAt      
 
   @@index([shop])
+  @@index([isTerminal])
   @@schema("risk_score_model")
 }
 model zippyy_buyer_profile {
@@ -199,6 +227,11 @@ model zippyy_risk_settings {
   
   // --- STORE CONFIGURATION ---
   timezone                  String   @default("Asia/Kolkata")
+
+  // --- NEW: RISK ENGINE MODE & THRESHOLDS ---
+  riskMode                  String   @default("MANUAL") // "MANUAL" or "AUTO"
+  thresholdMedium           Int      @default(40)
+  thresholdHigh             Int      @default(70)
 
   // --- IDENTITY & CHECKOUT ---
   invalidEmailPenalty       Int      @default(40)  

@@ -1,10 +1,41 @@
 
-
 import prisma from "../db.server.js";
-import shopify from "../shopify.server.js";
+import shopify, { apiVersion } from "../shopify.server.js";
 import readline from "readline";
 import { Readable } from "stream";
 import { buildHistoricalBuyerProfiles } from "./Sync.server.js"; 
+
+async function getAdminGraphQL(shop) {
+  // Retrieve the session for this shop from the database
+  const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
+  
+  if (!sessions || sessions.length === 0) {
+    throw new Error(`No session found for shop: ${shop}`);
+  }
+
+  const session = sessions[0];
+  console.log(`[BULK] Retrieved session for ${shop}, access token length: ${session.accessToken?.length || 0}`);
+  
+  return async (query) => {
+    const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`;
+    console.log(`[BULK] Making GraphQL request to: ${url}`);
+    
+    const response = await fetch(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': session.accessToken,
+        },
+        body: JSON.stringify({ query }),
+      }
+    );
+    
+    console.log(`[BULK] GraphQL response status: ${response.status}`);
+    return response;
+  };
+}
 
 export async function handleBulkFinishWebhook(shop, payload) {
 
@@ -31,10 +62,10 @@ export async function handleBulkFinishWebhook(shop, payload) {
   global.processedBulkOps[cacheKey] = Date.now();
   console.log("[BULK] Checking bulk operation status");
 
-  // 2. GENERATE OFFLINE ADMIN: Build the GraphQL client for background tasks
-  const { admin } = await shopify.unauthenticated.admin(shop);
+  // 2. Get authenticated GraphQL handler with access token from session
+  const graphql = await getAdminGraphQL(shop);
 
-  const response = await admin.graphql(`
+  const response = await graphql(`
     query {
       node(id: "${payload.admin_graphql_api_id}") {
         ... on BulkOperation {
@@ -45,7 +76,26 @@ export async function handleBulkFinishWebhook(shop, payload) {
     }
   `);
 
-  const result = await response.json();
+  if (!response.ok) {
+    console.error(`[BULK] GraphQL request failed with status ${response.status}`);
+    const text = await response.text();
+    console.error(`[BULK] Response body:`, text);
+    throw new Error(`GraphQL request failed: ${response.status}`);
+  }
+
+  let result;
+  try {
+    const text = await response.text();
+    if (!text) {
+      console.error("[BULK] Empty response body from GraphQL");
+      throw new Error("Empty response body");
+    }
+    result = JSON.parse(text);
+  } catch (error) {
+    console.error("[BULK] Failed to parse GraphQL response:", error);
+    throw error;
+  }
+
   const operation = result?.data?.node;
 
   if (!operation) {

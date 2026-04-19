@@ -1,8 +1,8 @@
-
 // import prisma from "../db.server.js";
 // import { updateSingleBuyerProfile } from "./Sync.server.js";
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
+import { captureMLTrainingData } from "./mlTrainingPipeline.server.js";
 
 // export async function processDisputeUpdate(topic, shop, payload) {
 //   console.log(`[Dispute Update] Processing ${topic} for order: ${payload.order_id}`);
@@ -10,7 +10,7 @@ import { updateSingleBuyerProfile } from "./Sync.server.js";
 //   try {
 //     const disputeId = payload.id?.toString();
 //     const shopifyOrderIdStr = payload.order_id?.toString();
-    
+
 //     // Webhooks usually send raw integer IDs, but our DB stores GraphQL IDs for orders
 //     const orderGid = shopifyOrderIdStr.includes("gid://") 
 //       ? shopifyOrderIdStr 
@@ -212,6 +212,9 @@ export async function processDisputeUpdate(topic, shop, payload) {
         `gid://shopify/Order/${testOrderId}`
       );
     }
+
+    // Capture ML Training Data for Dispute
+    await captureMLTrainingData(testShop, orderRecord.id, 'DISPUTE');
 
   } catch (error) {
     console.error(`[Dispute Error] Failed to process dispute:`, error.message);

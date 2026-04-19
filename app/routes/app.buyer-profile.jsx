@@ -475,9 +475,13 @@ export default function Index() {
     const isShopifyCancelled = Boolean(order?.cancelledAt);
 
     const isRtoShipment = SHIPMENT_RTO.has(ship);
-    const isReturnedFulfill = fulfill === "returned" || fulfill === "restocked";
+    const rawFulfill = order?.fulfillmentStatus?.trim().toLowerCase();
+    const rawFinancial = order?.financialStatus?.trim().toLowerCase();
+    const isReturnedFulfill = fulfill === "returned" || fulfill === "restocked" ||
+                             rawFulfill === "returned" || rawFulfill === "restocked";
+    const isRefunded = financial === "refunded" || rawFinancial === "refunded";
 
-    if (order?.isRTO || isRtoShipment || isReturnedFulfill) {
+    if (order?.isRTO || isRtoShipment || isReturnedFulfill || isRefunded) {
       return "rto";
     }
 
