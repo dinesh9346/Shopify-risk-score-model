@@ -77,7 +77,10 @@ import { captureMLTrainingData } from "./mlTrainingPipeline.server.js";
 //       localOrder.customerId,
 //       orderGid
 //     );
-
+//
+//     // 6. Capture ML Training Data for Dispute
+//     await captureMLTrainingData(shop, localOrder.id, 'DISPUTE');
+//
 //   } catch (error) {
 //     // Crucial: Throwing the error ensures your webhook endpoint returns a 500, 
 //     // forcing Shopify to retry sending the webhook later if the database is temporarily locked.

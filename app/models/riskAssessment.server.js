@@ -124,6 +124,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     const shippingZip = payload.shipping_address?.zip?.trim() || "";
     const shippingCountry = payload.shipping_address?.country?.trim() || payload.shipping_address?.country_code?.trim() || "";
 
+    // ADDED THESE BACK IN:
     const firstName = customer?.first_name || payload.shipping_address?.first_name || payload.billing_address?.first_name || null;
     const lastName = customer?.last_name || payload.shipping_address?.last_name || payload.billing_address?.last_name || null;
     const orderValue = parseFloat(payload.total_price || "0");
@@ -131,16 +132,25 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     const customerName = [firstName, lastName].filter(Boolean).join(' ') || 'Customer';
 
     let paymentType = payload.payment_gateway_names?.join(", ") || "UNKNOWN";
+    if (!paymentType || paymentType.trim() === "") paymentType = "UNKNOWN";
+
     const isDraftOrder = payload.source_name === "shopify_draft_order" || payload.source_name === "2932204";
     const isPendingPayment = payload.financial_status === "pending";
     
     const orderTags = (payload.tags || "").toLowerCase();
     const orderNote = (payload.note || "").toLowerCase();
 
+    // NEW: Explicitly track if this is a "Payment due later" draft order
+    let isAdminDraftPending = false;
+
     if (isDraftOrder && isPendingPayment) {
       const hasCodClue = orderTags.includes("cod") || orderTags.includes("cash") || orderNote.includes("cod") || orderNote.includes("cash");
-      if (hasCodClue) paymentType = "Admin_Draft_COD"; 
-      else if (paymentType === "UNKNOWN") paymentType = "Manual_Pending_Order"; 
+      if (hasCodClue) {
+        paymentType = "Admin_Draft_COD"; 
+      } else if (paymentType === "UNKNOWN") {
+        paymentType = "Manual_Pending_Order"; 
+        isAdminDraftPending = true; 
+      }
     }
 
     const currentProductIds = payload.line_items?.map(item => item.product_id).filter(Boolean) || [];
@@ -319,12 +329,24 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     let codRate = totalOrders > 0 ? (codCount / totalOrders) : 0;
     const successRate = totalOrders > 0 ? (validOrderCount / totalOrders) : 0;
 
-    // Globals for engine
+   // Globals for engine
     let riskPercentage = 0;
     let reasons = [];
+    
+    // Improved robust gateway string matching
     const currentGatewayStr = paymentType.toLowerCase();
-    const isCurrentCod = currentGatewayStr.includes("cod") || currentGatewayStr.includes("cash") || currentGatewayStr.includes("pay on delivery");
+    const isCurrentCod = currentGatewayStr.includes("cod") || 
+                         currentGatewayStr.includes("cash") || 
+                         currentGatewayStr.includes("pay on delivery") || 
+                         currentGatewayStr.includes("ondelivery");
 
+    // NEW: Calculate the exact order type for the ML model
+    let OrderType = "PREPAID"; 
+    if (isCurrentCod) {
+      OrderType = "COD";
+    } else if (isAdminDraftPending) {
+      OrderType = "COD"; 
+    }
 
     // =========================================================
     // MODE 1: AUTO (MACHINE LEARNING API CALL)
@@ -414,10 +436,17 @@ export async function calculateAndApplyRiskScore(shop, payload) {
       if (orderValue >= 5000) order_value_bin = "HIGH";
       else if (orderValue >= 1500) order_value_bin = "MEDIUM";
 
+      const cleanFirstName = (firstName || "").trim();
+      const cleanLastName = (lastName || "").trim();
+      const fullName = [cleanFirstName, cleanLastName].filter(Boolean).join(" ");
+      const isCombinedValid = fullName.length > 3;
+      const hasValidComponent = cleanFirstName.length >= 3 || cleanLastName.length >= 3;
+      const is_name_valid = (isCombinedValid && hasValidComponent) ? 1 : 0;
+
       // Build ML Payload
       const mlPayload = {
         customer_zipcode: cleanZip,
-        order_type: isCurrentCod ? "COD" : "PREPAID",
+        order_type:OrderType,
         order_value_bin: order_value_bin,
         email_domain: customerEmail ? customerEmail.split('@')[1].toLowerCase() : "unknown",
         order_month: month,
@@ -435,7 +464,8 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         is_email_domain_valid: isEmailDomainValid,
         customer_cancel_rate: cancelRate,
         customer_success_rate: successRate,
-        hoarding_count: maxUnpaidSameProduct
+        hoarding_count: maxUnpaidSameProduct,
+        is_name_valid: is_name_valid
       };
 
       console.log("\n================ ML PAYLOAD OUTBOUND ================");
@@ -453,11 +483,26 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         if (!mlResponse.ok) throw new Error("ML Server returned an error.");
         
         const mlData = await mlResponse.json();
-        riskPercentage = mlData.rto_probability * 100;
-        reasons.push({ 
-          description: `AI Prediction: Machine learning model analyzed historical customer and zip code behavior.`, 
-          sentiment: riskPercentage >= shopSettings.thresholdMedium ? "NEGATIVE" : "POSITIVE" 
-        });
+
+// 1. Get the risk percentage (Handling both possible variable names from Python)
+       riskPercentage = (mlData.risk_score || mlData.rto_probability) * 100;
+
+  // 2. Check if Python sent dynamic reasons
+       if (mlData.reasons && mlData.reasons.length > 0) {
+    // Loop through the reasons from Python and push them to Shopify
+         mlData.reasons.forEach((reason) => {
+          reasons.push({ 
+              description: reason.description || reason, // Handles both dict or string formats
+              sentiment: reason.sentiment || "NEGATIVE" 
+           });
+       });
+    }     else {
+    // 3. Fallback ONLY if Python's reasons list is somehow empty
+          reasons.push({ 
+             description: `AI Prediction: Algorithm detected an unusual combination of order behavior.`, 
+              sentiment: riskPercentage >= shopSettings.thresholdMedium ? "NEGATIVE" : "POSITIVE" 
+          });
+}
 
       } catch (mlError) {
         console.error("[ML ROUTING ERROR] Failed to reach Python server. Falling back to MANUAL rules.", mlError);

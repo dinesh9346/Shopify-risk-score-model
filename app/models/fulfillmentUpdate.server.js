@@ -1,6 +1,7 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 import { enqueueLifecycleNotification } from "./queue.server.js";
+import { captureMLTrainingData } from "./mlTrainingPipeline.server.js";
 
 const normalize = (value) =>
   (value || "").toString().trim().toLowerCase().replace(/\s+/g, "_").replace(/-+/g, "_");
@@ -50,6 +51,25 @@ const RTO_STATUSES = new Set([
   "canceled",
   "cancelled",
   "exception"
+]);
+
+// ADDED: Pre-Transit and In-Transit sets for accurate lifecycle tracking
+const SHIPMENT_IN_TRANSIT = new Set([
+  "in_transit",
+  "out_for_delivery",
+  "shipped",
+  "arrived_at_facility",
+  "departed_facility",
+  "in_transit_to_destination"
+]);
+
+const SHIPMENT_PRE_TRANSIT = new Set([
+  "label_created",
+  "label_purchased",
+  "label_printed",
+  "ready_for_pickup",
+  "manifested",
+  "picked_up"
 ]);
 
 export async function processFulfillmentUpdate(a, b, c) {
@@ -177,14 +197,15 @@ export async function processFulfillmentUpdate(a, b, c) {
           fulfillmentStatus: fulfillmentStatus,
           shipmentStatus: shipmentStatusRaw,
           previousFulfillmentStatus: previousOrder?.fulfillmentStatus,
-          lastFulfillmentStatusChange: 
+          lastFulfillmentStatusChange:
             previousOrder?.fulfillmentStatus !== fulfillmentStatus ? new Date() : undefined,
           isRTO: isRTO,
         }
       });
 
-      // QUEUE LIFECYCLE NOTIFICATIONS for fulfillment status changes
-      if (previousOrder && previousOrder.fulfillmentStatus !== fulfillmentStatus) {
+      // QUEUE LIFECYCLE NOTIFICATIONS for status changes
+      // FIXED: Uses shipmentStatus for physical delivery confirmation rather than fulfillmentStatus
+      if (previousOrder && (previousOrder.fulfillmentStatus !== fulfillmentStatus || normalize(previousOrder.shipmentStatus) !== shipmentStatus)) {
         const customerEmail = previousOrder.customerEmail;
         const customerPhone = previousOrder.customerPhone;
         const customerName = [previousOrder.firstName, previousOrder.lastName].filter(Boolean).join(' ') || 'Customer';
@@ -194,7 +215,7 @@ export async function processFulfillmentUpdate(a, b, c) {
         const orderAmount = previousOrder?.orderValue ? Number(previousOrder.orderValue) : 0;
         const sellerCompanyName = payload?.sellerCompanyName || previousOrder?.sellerCompanyName || shop || "Zippyy";
 
-        if (fulfillmentStatus === "fulfilled" || fulfillmentStatus === "success") {
+        if (shipmentStatus === "delivered" || shipmentStatus === "success") {
           await enqueueLifecycleNotification(shop, orderGid, "DELIVERED", {
             customerEmail,
             customerPhone,
@@ -205,18 +226,15 @@ export async function processFulfillmentUpdate(a, b, c) {
             sellerCompanyName,
             trackingId: trackingNumber || "N/A"
           });
-        } else if (fulfillmentStatus?.toLowerCase().includes("in_transit")) {
+        } else if (SHIPMENT_IN_TRANSIT.has(shipmentStatus) || fulfillmentStatus?.toLowerCase().includes("out_for_delivery")) {
           await enqueueLifecycleNotification(shop, orderGid, "IN_TRANSIT", {
             customerEmail, customerPhone, customerName,
             trackingNumber: trackingNumber,
             trackingUrl: trackingUrl
           });
-        } else if (fulfillmentStatus?.toLowerCase().includes("out_for_delivery")) {
-          await enqueueLifecycleNotification(shop, orderGid, "OUT_FOR_DELIVERY", {
-            customerEmail, customerPhone, customerName
-          });
-        } else if (fulfillmentStatus === "delivered") {
-          await enqueueLifecycleNotification(shop, orderGid, "DELIVERED", {
+        } else if (SHIPMENT_PRE_TRANSIT.has(shipmentStatus) || (fulfillmentStatus === "fulfilled" && trackingNumber)) {
+          // If fulfilled but not scanned by carrier yet, it's pre-transit
+          await enqueueLifecycleNotification(shop, orderGid, "ORDER_SHIPPED", {
             customerEmail, customerPhone, customerName,
             trackingId: trackingNumber || "N/A"
           });
@@ -229,7 +247,7 @@ export async function processFulfillmentUpdate(a, b, c) {
             customerEmail, customerPhone, customerName
           });
         }
-        console.log(`[Fulfillment Update] Queued lifecycle notification for status: ${fulfillmentStatus}`);
+        console.log(`[Fulfillment Update] Queued lifecycle notification for status: ${shipmentStatus || fulfillmentStatus}`);
       }
     }
 
@@ -305,6 +323,18 @@ export async function processFulfillmentUpdate(a, b, c) {
         orderData.customerId,
         orderIdNumeric.toString()
       );
+
+      // FIXED: ML Data is now strictly tied to genuine terminal states (Dispute > RTO > Delivered)
+      if (orderData.hasDispute) {
+        await captureMLTrainingData(shop, orderData.id, 'DISPUTE');
+      } else if (orderData.isRTO) {
+        await captureMLTrainingData(shop, orderData.id, 'RTO');
+      } else if (
+        orderData.shipmentStatus &&
+        (orderData.shipmentStatus.toLowerCase() === 'delivered' || orderData.shipmentStatus.toLowerCase() === 'success')
+      ) {
+        await captureMLTrainingData(shop, orderData.id, 'DELIVERED');
+      }
     }
 
   } catch (error) {

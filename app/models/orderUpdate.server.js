@@ -2,6 +2,7 @@ import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 import { detectOrderStateChanges, updateStoredOrderState } from "./orderStateDetector.server.js";
 import { enqueueLifecycleNotification } from "./queue.server.js";
+import { captureMLTrainingData } from "./mlTrainingPipeline.server.js";
 
 function getProductDetailsFromPayload(payload) {
   const items = payload?.line_items || payload?.lineItems || [];
@@ -134,6 +135,17 @@ export async function processOrderUpdate(shop, payload) {
       numericOrderId
     );
 
+  // 6. Capture ML Data if RTO
+    if (isRtoStatus) {
+      // Find the local order ID we just upserted to pass to the ML capture
+      const localOrder = await prisma.shopify_store_order.findUnique({
+        where: { shop_shopifyOrderId: { shop, shopifyOrderId: payload.admin_graphql_api_id } },
+        select: { id: true }
+      });
+      if (localOrder) {
+        await captureMLTrainingData(shop, localOrder.id, 'RTO');
+      }
+    }
   } catch (error) {
     console.error(` [Order Update Error] Failed to update local DB:`, error.message);
     // Throwing the error tells SQS to keep the message in the queue and try again later

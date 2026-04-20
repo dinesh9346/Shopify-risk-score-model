@@ -382,6 +382,10 @@ export async function buildHistoricalBuyerProfiles(shop) {
   }
 
   console.log(`[BULK COMPLETE] Total Buyer Profiles Built: ${totalSaved}`);
+  
+  // Now capture ML Training Data for historical terminal orders
+  const { bulkCaptureMLTrainingData } = await import("./mlTrainingPipeline.server.js");
+  await bulkCaptureMLTrainingData(shop);
 }
 
 /* ================= 3. SINGLE PROFILE UPDATER (WEBHOOKS) ================= */

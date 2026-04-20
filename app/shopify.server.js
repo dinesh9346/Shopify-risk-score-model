@@ -11,6 +11,7 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { triggerBulkOrderSync } from "./models/Sync.server";
 import { startQueueListener, startOutboundQueueListener } from "./models/queue.server.js";
+import { startScheduler } from "./models/scheduler.server.js";
 export const MONTHLY_PLAN = 'Zippyy Pro Monthly';
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -74,17 +75,8 @@ hooks: {
       // We don't throw here so the merchant can still enter the app if a non-critical sync fails
     }
 
-    // 3. BULK SYNC LOGIC 
-    const orderCount = await prisma.shopify_store_order.count({
-      where: { shop },
-    });
-
-    if (orderCount === 0) {
-      console.log(`[AUTH] First install detected for ${shop}. Starting bulk sync...`);
-      await triggerBulkOrderSync(admin, shop);
-    } else {
-      console.log(`[AUTH] Orders already synced for ${shop}. Skipping bulk sync.`);
-    }
+    // 3. BULK SYNC LOGIC IS NOW MOVED TO DASHBOARD MANUAL SYNC
+    console.log(`[AUTH] afterAuth hook completed for ${shop}. Bulk sync should be triggered manually from dashboard.`);
   },
 },
   // 🔹 2. WEBHOOKS: Keeps your local data warehouse updated in real-time
@@ -150,16 +142,18 @@ webhooks: {
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
-// Boot up BOTH background workers safely
+// Boot up ALL background workers safely
 if (process.env.NODE_ENV === "production") {
   startQueueListener().catch(console.error);
   startOutboundQueueListener().catch(console.error);
+  startScheduler();
 } else {
   // In development, prevent Vite from starting 100 queues on every save
   if (!global.__queueListenerStarted) {
     global.__queueListenerStarted = true;
     startQueueListener().catch(console.error);
     startOutboundQueueListener().catch(console.error);
+    startScheduler();
   }
 }
 

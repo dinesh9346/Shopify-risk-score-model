@@ -146,6 +146,7 @@ model zippyy_ml_training_data {
   customer_cancel_rate         Float?
   customer_success_rate        Float?
   hoarding_count               Int?
+  is_name_valid                Int?
 
   // --- Outcomes (Terminal States) ---
   isRTO              Boolean  @default(false)
