@@ -1,4 +1,4 @@
-import { useLoaderData, useSearchParams, useRevalidator  } from "react-router";
+import { useLoaderData, useSearchParams, useRevalidator, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { useState, useMemo, useEffect } from "react"; 
 import "@shopify/polaris/build/esm/styles.css";
@@ -153,6 +153,7 @@ const ReasonsPopover = ({ reasons, active, onToggle }) => {
 
 function DashboardUI() {
   const data = useLoaderData() || {};
+  const navigate = useNavigate();
   const [activePopoverId, setActivePopoverId] = useState(null);
   
   // URL Param checking
@@ -229,11 +230,20 @@ function DashboardUI() {
           <IndexTable.Cell><Badge tone="info">{paymentType || "UNKNOWN"}</Badge></IndexTable.Cell>
           <IndexTable.Cell><RiskBadge level={riskLevel} /></IndexTable.Cell>
           <IndexTable.Cell>
-            <ReasonsPopover 
-              reasons={reasons} 
-              active={activePopoverId === id}
-              onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
-            />
+            <InlineStack gap="100">
+              <Button 
+                size="slim" 
+                variant="secondary"
+                onClick={() => navigate(`/app/risk-level-analysis/${id}`)}
+              >
+                Analyze
+              </Button>
+              <ReasonsPopover 
+                reasons={reasons} 
+                active={activePopoverId === id}
+                onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
+              />
+            </InlineStack>
           </IndexTable.Cell>
         </IndexTable.Row>
       );

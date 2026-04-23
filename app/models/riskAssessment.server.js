@@ -2,7 +2,7 @@ import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 import dns from 'dns/promises';
 import { enqueueOutboundRisk, enqueueNotification } from "./queue.server.js";
-
+import { v4 as uuidv4 } from 'uuid';
 // EXTERNAL API HELPER (OLA MAPS) 
 async function checkAddressValidity(orderId, fullAddress) {
   if (!fullAddress || fullAddress.trim() === "") return null;
@@ -157,6 +157,9 @@ export async function calculateAndApplyRiskScore(shop, payload) {
     const currentFingerprint = [shippingAddress1, shippingZip, shippingCountry]
       .filter(Boolean).join("").toLowerCase().replace(/[\s,]/g, "");
 
+    // --- NEW: GENERATE THE SECURE TOKEN ---
+    const secureToken = uuidv4(); 
+
     // 4. SYNC ORDER LOCALLY (UPSERT)
     const orderRecord = await prisma.shopify_store_order.upsert({
       where: { shop_shopifyOrderId: { shop, shopifyOrderId: orderGid } },
@@ -165,7 +168,8 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
         paymentGateway: paymentType, customerPhone, shippingAddress1, shippingAddress2,
         shippingCity, shippingProvince, shippingZip, shippingCountry,
-        firstName, lastName, lineItemsData: JSON.stringify(currentProductIds)
+        firstName, lastName, lineItemsData: JSON.stringify(currentProductIds),
+        addressEditToken: secureToken // <-- ADD TOKEN HERE
       },
       create: {
         shop, shopifyOrderId: orderGid, customerId, firstName, lastName, customerEmail,
@@ -174,9 +178,12 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
-        lineItemsData: JSON.stringify(currentProductIds)
+        lineItemsData: JSON.stringify(currentProductIds),
+        addressEditToken: secureToken // <-- ADD TOKEN HERE
       }
     });
+
+
 
     const storeOrderId = orderRecord.id;
 
@@ -812,23 +819,69 @@ export async function calculateAndApplyRiskScore(shop, payload) {
         settingsSnapshot: shopSettings 
       }
     });
+    // ... existing code above ...
     const riskFacts = reasons.map(r => ({ description: r.description, sentiment: r.sentiment || "NEUTRAL" }));
     await enqueueOutboundRisk(shop, orderGid, score, riskLevel, riskFacts);
 
-    // 10. TRIGGER OMNICHANNEL NOTIFICATIONS
+    // 10. TRIGGER OMNICHANNEL NOTIFICATIONS & WHATSAPP FLOW
     try {
         if (customerPhone || customerEmail) {
+            // Your existing notification queue
             await enqueueNotification(
                 shop, orderGid, customerPhone, customerEmail, 
                 customerName, riskLevel, isCurrentCod, orderValue
             );
         }
+
+        // --- NEW: TRIGGER MYOPERATOR WHATSAPP TEMPLATE ---
+        if (customerPhone) {
+            // 1. Construct the secure URL
+            // Ensure you have APP_URL defined in your .env file (e.g., https://your-domain.com)
+            const dynamicEditUrl = `${process.env.APP_URL}/edit-address/${secureToken}`;
+            
+            // Format the address for the message template variable {{2}}
+            const fullAddressPreview = [shippingAddress1, shippingCity, shippingProvince, shippingZip]
+               .filter(Boolean).join(", ");
+
+            console.log(`[WhatsApp] Sending Edit Address Link to ${customerPhone}: ${dynamicEditUrl}`);
+
+           // 2. Ping MyOperator API
+await fetch("https://api.myoperator.com/whatsapp/send-template", {
+    method: "POST",
+    headers: {
+        "Authorization": `Bearer ${process.env.MYOPERATOR_API_KEY}`, // Add this to your .env
+        "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+        phone: customerPhone,
+        template_name: "godash_address_verify",
+        components: [
+            {
+                type: "body",
+                parameters: [
+                    { type: "text", text: customerName || "Customer" }, // Maps to {{1}} in body
+                    { type: "text", text: fullAddressPreview }          // Maps to {{2}} in body
+                ]
+            },
+            {
+                type: "button",
+                sub_type: "url",
+                index: "0", 
+                parameters: [
+                    // CHANGED: Pass ONLY the secureToken, NOT the full dynamicEditUrl
+                    { type: "text", text: secureToken } 
+                ]
+            }
+        ]
+    })
+});
+        }
+
     } catch (notificationError) {
         console.error("[Notification Queue Error]:", notificationError);
     }
 
     return new Response(null, { status: 200 });
-    
   } catch (error) {
     console.error(`[CRITICAL ERROR] Failed to process Risk Score for Order ${payload.id}:`, error);
     return new Response("Internal Server Error", { status: 500 });

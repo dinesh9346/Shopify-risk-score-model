@@ -338,15 +338,23 @@ export default function NotificationTracker() {
   // Extract unique customers/recipients for the Master View
   const uniqueCustomers = useMemo(() => {
     const recipients = new Set();
+    
+    // Add recipients from sent notifications
     notifications.forEach(n => recipients.add(n.recipient));
-    // If replies have a different identifier, you might need to add them here too
+    
+    // Add senders (customers) from received replies
+    replies.forEach(r => {
+      if (r.customerPhone) recipients.add(r.customerPhone);
+    });
+
     return Array.from(recipients).map(recipient => {
       return {
         recipient,
-        totalMessages: notifications.filter(n => n.recipient === recipient).length
+        totalMessages: notifications.filter(n => n.recipient === recipient).length + 
+                       replies.filter(r => r.customerPhone === recipient).length
       };
     });
-  }, [notifications]);
+  }, [notifications, replies]);
 
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(notifications);
@@ -423,14 +431,16 @@ export default function NotificationTracker() {
   const renderDetailView = () => {
     // Filter data for the selected customer
     const customerNotifications = notifications.filter(n => n.recipient === selectedCustomer);
-    // Note: Adjust 'customerNumber' or 'sender' below based on your actual Prisma Schema for CustomerReply
-    const customerReplies = replies.filter(r => r.recipient === selectedCustomer || r.customerPhone === selectedCustomer);
+    
+    // In CustomerReply model, we use customerPhone
+    const customerReplies = replies.filter(r => r.customerPhone === selectedCustomer);
 
     const whatsappSent = customerNotifications.filter(n => n.channel === "WHATSAPP");
     const emailSent = customerNotifications.filter(n => n.channel === "EMAIL");
     
-    // Assuming you have a way to distinguish channel in replies. Adjust if needed.
-    const whatsappReplies = customerReplies.filter(r => r.channel === "WHATSAPP" || !r.channel); 
+    // Assuming you have a way to distinguish channel in replies. 
+    // In our webhook, we might just have messageType (text, image). We'll assume WhatsApp for now.
+    const whatsappReplies = customerReplies.filter(r => !r.channel || r.channel === "WHATSAPP"); 
     const emailReplies = customerReplies.filter(r => r.channel === "EMAIL");
 
     const renderNotificationRows = (notifs) => notifs.map((notif, index) => (

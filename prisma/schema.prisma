@@ -55,7 +55,8 @@ model shopify_store_order {
   trackingNumber    String?
   trackingUrl       String?
   shipmentStatus    String?
-
+//for edit address
+  addressEditToken  String?  @unique
   ipAddress         String?
   shippingAddress1  String?
   shippingAddress2  String?

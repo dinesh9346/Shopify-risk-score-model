@@ -28,6 +28,7 @@ export default function App() {
           <s-link href="/app/buyer-profile">Buyer Profiles</s-link>
           <s-link href="/app/notifications">Notifications</s-link>
           <s-link href="/app/analytics">Analytics</s-link>
+          <s-link href="/app/app.risk-level-analysis/$orderId">Settings</s-link>
           <s-link href="/app/pricing">Pricing</s-link>   
         
         </s-app-nav>
