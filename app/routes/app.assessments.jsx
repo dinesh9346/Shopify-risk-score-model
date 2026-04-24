@@ -230,20 +230,11 @@ function DashboardUI() {
           <IndexTable.Cell><Badge tone="info">{paymentType || "UNKNOWN"}</Badge></IndexTable.Cell>
           <IndexTable.Cell><RiskBadge level={riskLevel} /></IndexTable.Cell>
           <IndexTable.Cell>
-            <InlineStack gap="100">
-              <Button 
-                size="slim" 
-                variant="secondary"
-                onClick={() => navigate(`/app/risk-level-analysis/${id}`)}
-              >
-                Analyze
-              </Button>
-              <ReasonsPopover 
-                reasons={reasons} 
-                active={activePopoverId === id}
-                onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
-              />
-            </InlineStack>
+            <ReasonsPopover 
+              reasons={reasons} 
+              active={activePopoverId === id}
+              onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
+            />
           </IndexTable.Cell>
         </IndexTable.Row>
       );
@@ -255,12 +246,22 @@ function DashboardUI() {
       title="Zippyy Risk Engine" 
       subtitle="Real-time fraud analysis and prevention"
       primaryAction={{
-        content: "Refresh Data",
-        onAction: () => revalidate(),
-        loading: state === "loading",
+        content: "Model Fine-Tuning",
+        onAction: () => navigate("/app/model-fine-tuning"),
       }}
     >
       <Layout>
+        <Layout.Section>
+          <InlineStack gap="200" align="end">
+            <Button 
+              onClick={() => revalidate()}
+              loading={state === "loading"}
+            >
+              Refresh Data
+            </Button>
+          </InlineStack>
+        </Layout.Section>
+
         <Layout.Section>
           <Banner tone="info">
             <p>Your Data Warehouse is synced and actively monitoring <strong>{orderCount}</strong> historical orders.</p>

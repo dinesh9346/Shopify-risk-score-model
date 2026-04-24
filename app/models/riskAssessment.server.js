@@ -1,7 +1,7 @@
 import prisma from "../db.server.js";
 import { updateSingleBuyerProfile } from "./Sync.server.js";
 import dns from 'dns/promises';
-import { enqueueOutboundRisk, enqueueNotification } from "./queue.server.js";
+import { enqueueOutboundRisk, enqueueNotification, enqueueLifecycleNotification } from "./queue.server.js";
 import { v4 as uuidv4 } from 'uuid';
 // EXTERNAL API HELPER (OLA MAPS) 
 async function checkAddressValidity(orderId, fullAddress) {
@@ -833,48 +833,73 @@ export async function calculateAndApplyRiskScore(shop, payload) {
             );
         }
 
+        // --- NEW: SEND ORDER CONFIRMATION TO MERCHANTS ---
+        try {
+            const lineItems = payload.line_items || [];
+            const productDetails = lineItems.map(item => `${item.title} (x${item.quantity})`).join(", ") || "Order Items";
+            
+            await enqueueLifecycleNotification(shop, orderGid, "ORDER_CONFIRMATION", {
+                customerName,
+                customerEmail,
+                customerPhone,
+                orderId: orderGid,
+                productDetails,
+                orderType: isCurrentCod ? "COD" : "Prepaid",
+                orderAmount: orderValue,
+                sellerCompanyName: shop
+            });
+            console.log(`[Order Confirmation] Queued ORDER_CONFIRMATION template for order: ${orderGid}`);
+        } catch (orderConfirmError) {
+            console.error("[Order Confirmation Error]:", orderConfirmError);
+        }
+
         // --- NEW: TRIGGER MYOPERATOR WHATSAPP TEMPLATE ---
         if (customerPhone) {
-            // 1. Construct the secure URL
-            // Ensure you have APP_URL defined in your .env file (e.g., https://your-domain.com)
-            const dynamicEditUrl = `${process.env.APP_URL}/edit-address/${secureToken}`;
+            // 1. Construct the secure URL & token
+            const appUrl = process.env.APP_URL || "https://zippyy.com";
+            const dynamicEditUrl = `${appUrl}/edit-address/${secureToken}`;
             
-            // Format the address for the message template variable {{2}}
+            // Format the address for the message template variable
             const fullAddressPreview = [shippingAddress1, shippingCity, shippingProvince, shippingZip]
                .filter(Boolean).join(", ");
-
-            console.log(`[WhatsApp] Sending Edit Address Link to ${customerPhone}: ${dynamicEditUrl}`);
-
-           // 2. Ping MyOperator API
-await fetch("https://api.myoperator.com/whatsapp/send-template", {
+           // 2. Use MyOperator V2 API format (matching the curl command)
+await fetch("https://backend.api-wa.co/campaign/myoperator/api/v2", {
     method: "POST",
     headers: {
-        "Authorization": `Bearer ${process.env.MYOPERATOR_API_KEY}`, // Add this to your .env
         "Content-Type": "application/json"
     },
     body: JSON.stringify({
-        phone: customerPhone,
-        template_name: "godash_address_verify",
-        components: [
-            {
-                type: "body",
-                parameters: [
-                    { type: "text", text: customerName || "Customer" }, // Maps to {{1}} in body
-                    { type: "text", text: fullAddressPreview }          // Maps to {{2}} in body
-                ]
-            },
+        apiKey: process.env.MYOPERATOR_API_KEY,
+        campaignName: "rsm_address_verify",
+        destination: customerPhone.replace(/\D/g, ''), // Clean phone number
+        userName: customerName || "Customer",
+        templateParams: [
+            secureToken,                        // {{1}} - Token for button URL
+            customerName || "Customer"          // {{2}} - Customer name
+        ],
+        source: "new-landing-page form",
+        media: {},
+        buttons: [
             {
                 type: "button",
-                sub_type: "url",
-                index: "0", 
+                sub_type: "URL",
+                index: 0,
                 parameters: [
-                    // CHANGED: Pass ONLY the secureToken, NOT the full dynamicEditUrl
-                    { type: "text", text: secureToken } 
+                    {
+                        type: "text",
+                        text: secureToken  // Send token directly as button parameter
+                    }
                 ]
             }
-        ]
+        ],
+        carouselCards: [],
+        location: {},
+        attributes: {},
+        paramsFallbackValue: {
+            FirstName: customerName || "user"
+        }
     })
-});
+}).catch(err => console.error("[WhatsApp API Error]:", err));
         }
 
     } catch (notificationError) {

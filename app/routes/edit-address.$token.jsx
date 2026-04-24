@@ -1,24 +1,45 @@
 
-import { useLoaderData, Form, useActionData } from "@remix-run/react";
+import { useLoaderData, Form, useActionData } from "react-router";
 import prisma from "../db.server"; // Adjust path to your Prisma client
 import { updateShopifyOrderAddress } from "../models/updateAddress.server";
 
 // 1. LOADER: Fetches the order securely using the token
-export async function loader({ params }) {
+export async function loader({ params, request }) {
   const token = params.token;
+  
+  // Validate token format
+  if (!token || token.trim() === "") {
+    throw new Response("Invalid token provided.", { status: 400 });
+  }
+
+  console.log(`[Edit Address] Loading order with token: ${token}`);
   
   const order = await prisma.shopify_store_order.findUnique({
     where: { addressEditToken: token },
     select: {
       id: true,
+      shop: true,
+      shopifyOrderId: true,
       shippingAddress1: true,
       shippingCity: true,
       shippingProvince: true,
       shippingZip: true,
+      customerPhone: true,
     }
   });
-
+  // Inside your action, after the prisma.update
+try {
+  const whatsapp = new WhatsAppAdapter();
+  await whatsapp.sendMessage({
+    to: order.customerPhone,
+    message: "Success! Your shipping address has been updated and your order is being processed."
+    // Or use a template like 'address_update_success'
+  });
+} catch (err) {
+  console.error("Optional confirmation message failed", err);
+}
   if (!order) {
+    console.error(`[Edit Address] Order not found for token: ${token}`);
     throw new Response("This link is invalid or has already been used.", { status: 404 });
   }
 

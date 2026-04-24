@@ -365,6 +365,24 @@ export async function startOutboundQueueListener() {
 
             // Map each lifecycle stage to notification handlers
             switch (stage) {
+              case "ORDER_CONFIRMATION":
+                // Send ORDER_CONFIRMATION template to merchants on order creation
+                if (customerPhone) {
+                  tasks.push(notificationService.sendWhatsAppNotification({
+                    shop,
+                    recipient: customerPhone,
+                    templateId: WHATSAPP_TEMPLATES.ORDER_CONFIRMATION,
+                    templateData: {
+                      customerName,
+                      orderId: cleanOrderId,
+                      productDetails: orderData?.productDetails || "Order Items",
+                      orderAmount: orderData?.orderAmount || 0,
+                      sellerCompanyName: orderData?.sellerCompanyName || shop
+                    }
+                  }));
+                }
+                break;
+
               case "PAYMENT_CONFIRMED":
                 if (customerEmail) {
                   tasks.push(notificationService.sendEmailNotification({
@@ -381,7 +399,10 @@ export async function startOutboundQueueListener() {
                     templateId: WHATSAPP_TEMPLATES.ORDER_CONFIRMATION,
                     templateData: {
                       customerName,
-                      orderId: cleanOrderId
+                      orderId: cleanOrderId,
+                      productDetails: orderData?.productDetails || "Order Items",
+                      orderAmount: orderData?.orderAmount || 0,
+                      sellerCompanyName: orderData?.sellerCompanyName || shop
                     }
                   }));
                 }
