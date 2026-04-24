@@ -5,7 +5,7 @@
 
 export const WHATSAPP_TEMPLATES = {
   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
-  RSM_ADDRESS_VERIFY: 'rsm_address_verification',
+  RSM_ADDRESS_VERIFY: 'address_verification',
   SHIPMENT_CREATED: 'in_shipment_created_wa_message',
   SHIPMENT_IN_TRANSIT: 'tracking_link_in_transit_new',
   SHIPMENT_OUT_FOR_DELIVERY_PREPAID: 'tracking_link_out_for_delivery_prepaid_new2',
@@ -19,7 +19,7 @@ export const WHATSAPP_TEMPLATES = {
 export const WHATSAPP_CAMPAIGNS = {
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment booked',
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'risk_score_model_order_confirmation',
-  [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'rsm_address_verification'
+  [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'address_verification'
 };
 
 export const TEMPLATE_DESCRIPTIONS = {

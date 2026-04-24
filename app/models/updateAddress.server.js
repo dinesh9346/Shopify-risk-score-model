@@ -24,10 +24,15 @@ export async function updateShopifyOrderAddress(shop, shopifyOrderId, newAddress
   // Use unauthenticated admin since the customer is triggering this outside Shopify Admin
   const { admin } = await shopify.unauthenticated.admin(shop);
 
+  // FIX: Safety check to prevent double-prefixing the GraphQL ID
+  const formattedId = String(shopifyOrderId).includes("gid://") 
+    ? String(shopifyOrderId) 
+    : `gid://shopify/Order/${shopifyOrderId}`;
+
   const response = await admin.graphql(UPDATE_ADDRESS_MUTATION, {
     variables: {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId}`,
+        id: formattedId, // Using the safe ID here
         shippingAddress: newAddress
       }
     }
