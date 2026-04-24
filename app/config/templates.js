@@ -59,8 +59,7 @@ const TEMPLATE_PARAM_ORDER = {
   ],
   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: [
     'customerName',      // {{1}}
-    'shippingAddress',   // {{2}}
-    'editUrl'            // Dynamic Button Parameter (The Token)
+    'shippingAddress'   // {{2}}
   ]
 };
 
