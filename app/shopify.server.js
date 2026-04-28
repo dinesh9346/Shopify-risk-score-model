@@ -10,7 +10,10 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { triggerBulkOrderSync } from "./models/Sync.server";
-import { startQueueListener, startOutboundQueueListener } from "./models/queue.server.js";
+import { startAllQueues } from "./models/queue.server.js";
+
+// Call this once when your server boots up!
+startAllQueues();
 import { startScheduler } from "./models/scheduler.server.js";
 export const MONTHLY_PLAN = 'Zippyy Pro Monthly';
 const shopify = shopifyApp({

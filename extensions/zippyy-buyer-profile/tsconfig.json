@@ -16,8 +16,10 @@
     "target": "ES2020",
     "checkJs": true,
     "allowJs": true,
-    "moduleResolution": "node",
-    "esModuleInterop": true
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "ignoreDeprecations": "6.0",
+    "types": ["@shopify/ui-extensions", "node"]
   },
   "exclude": [
     "node_modules",

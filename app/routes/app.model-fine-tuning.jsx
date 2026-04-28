@@ -1,5 +1,5 @@
 import { useLoaderData, useNavigate } from "react-router";
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
   Page,
   Layout,
@@ -9,15 +9,14 @@ import {
   Badge,
   Box,
   InlineStack,
-  Grid,
   Divider,
   Tabs,
   Button,
   Icon,
   Banner,
-  EmptyState
+  IndexTable // <-- Standard Shopify List Component
 } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckIcon, InfoIcon } from '@shopify/polaris-icons';
+import { AlertTriangleIcon, CheckIcon } from '@shopify/polaris-icons';
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -45,14 +44,14 @@ export const loader = async ({ request }) => {
     });
 
     // Classify orders into categories
-    const falsePositives = []; // HIGH risk but delivered successfully
-    const falseNegatives = []; // LOW risk but resulted in fraud/chargeback/cancellation
+    const falsePositives = []; 
+    const falseNegatives = []; 
 
     manualOrders.forEach((riskScore) => {
       const order = riskScore.order;
       if (!order) return;
 
-      // Determine actual outcome
+      // Determine actual outcome states
       const isDelivered = !order.isRTO && 
         order.fulfillmentStatus?.toUpperCase() === "FULFILLED" &&
         order.shipmentStatus?.toUpperCase() !== "UNDELIVERED";
@@ -63,7 +62,14 @@ export const loader = async ({ request }) => {
 
       const isCancelled = order.fulfillmentStatus?.toUpperCase() === "CANCELLED";
       const hasDispute = order.hasDispute || (order.disputes && order.disputes.length > 0);
-      const isChargeback = isCancelled || isRTO || hasDispute;
+      
+      const isFailedDelivery = isCancelled || isRTO || hasDispute;
+
+      // Ensure RTO takes priority in the label if applicable
+      let specificOutcome = "UNKNOWN";
+      if (hasDispute) specificOutcome = "CHARGEBACK";
+      else if (isRTO) specificOutcome = "RTO";
+      else if (isCancelled) specificOutcome = "CANCELLED";
 
       // FALSE POSITIVE: HIGH risk but delivered
       if (riskScore.riskLevel === "HIGH" && isDelivered) {
@@ -93,7 +99,7 @@ export const loader = async ({ request }) => {
       }
 
       // FALSE NEGATIVE: LOW risk but resulted in chargeback/fraud/cancellation
-      if (riskScore.riskLevel === "LOW" && isChargeback) {
+      if (riskScore.riskLevel === "LOW" && isFailedDelivery) {
         falseNegatives.push({
           id: riskScore.id,
           orderId: order.shopifyOrderId,
@@ -116,7 +122,7 @@ export const loader = async ({ request }) => {
           reasons: riskScore.reasons || "",
           settingsSnapshot: riskScore.settingsSnapshot || {},
           caseType: "FALSE_NEGATIVE",
-          outcome: isChargeback ? "CHARGEBACK" : isRTO ? "RTO" : "CANCELLED"
+          outcome: specificOutcome 
         });
       }
     });
@@ -139,8 +145,19 @@ export const loader = async ({ request }) => {
   }
 };
 
+// --- SINGLE COLUMN DATA ROW COMPONENT (For Detail View) ---
+function DetailItem({ label, value }) {
+  if (!value) return null;
+  return (
+    <BlockStack gap="0">
+      <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+      <Text as="span" variant="bodyMd" breakWord fontWeight="medium">{value}</Text>
+    </BlockStack>
+  );
+}
+
 // --- WEIGHT RECOMMENDATION COMPONENT ---
-function WeightRecommendations({ reasons, caseType, weights }) {
+function WeightRecommendations({ reasons, caseType }) {
   const reasonsList = reasons
     ? reasons.split(/[|,\n]/).map((r) => r.trim()).filter(Boolean)
     : [];
@@ -148,23 +165,20 @@ function WeightRecommendations({ reasons, caseType, weights }) {
   const recommendations = [];
 
   if (caseType === "FALSE_POSITIVE") {
-    // HIGH risk but delivered - reduce these weights
     recommendations.push({
       action: "REDUCE",
       title: "Reduce Conservative Weights",
-      description: "These weights were too strict and caused a false positive",
+      description: "These weights were too strict and caused a false positive.",
       items: reasonsList.map(reason => ({
         reason,
-        currentWeight: "See weight configuration below",
         suggestion: `Evaluate reducing weight for: ${reason}`
       }))
     });
   } else if (caseType === "FALSE_NEGATIVE") {
-    // LOW risk but failed - increase these weights
     recommendations.push({
       action: "INCREASE",
       title: "Increase Risk Weights",
-      description: "These risk factors were missed or underweighted, causing a false negative",
+      description: "These risk factors were missed or underweighted, causing a false negative.",
       items: reasonsList.map(reason => ({
         reason,
         suggestion: `Consider increasing weight for: ${reason}`
@@ -177,35 +191,41 @@ function WeightRecommendations({ reasons, caseType, weights }) {
       {recommendations.map((rec, idx) => (
         <Box 
           key={idx} 
-          padding="300" 
+          padding="400" 
           background={rec.action === "REDUCE" ? "bg-surface-success-subdued" : "bg-surface-critical-subdued"}
           borderRadius="200"
+          borderColor={rec.action === "REDUCE" ? "border-success" : "border-critical"}
+          borderWidth="025"
         >
           <BlockStack gap="200">
-            <InlineStack gap="200" blockAlign="center">
-              <Icon 
-                source={rec.action === "REDUCE" ? CheckIcon : AlertTriangleIcon}
-                tone={rec.action === "REDUCE" ? "success" : "critical"}
-              />
-              <Text fontWeight="bold">{rec.title}</Text>
+            <InlineStack gap="200" blockAlign="center" align="space-between">
+              <InlineStack gap="200" blockAlign="center">
+                <Icon 
+                  source={rec.action === "REDUCE" ? CheckIcon : AlertTriangleIcon}
+                  tone={rec.action === "REDUCE" ? "success" : "critical"}
+                />
+                <Text variant="headingSm" as="h4">{rec.title}</Text>
+              </InlineStack>
+              <Text variant="headingSm" as="span" tone={rec.action === "REDUCE" ? "success" : "critical"}>
+                {rec.action === "REDUCE" ? "Safe Order Flagged" : "Risky Order Missed"}
+              </Text>
             </InlineStack>
             <Text tone="subdued" variant="bodySm">{rec.description}</Text>
             
-            <BlockStack gap="150" paddingBlockStart="100">
-              {rec.items.map((item, itemIdx) => (
-                <Box key={itemIdx} paddingBlockStart="100">
-                  <Text variant="bodySm"><strong>• {item.reason}</strong></Text>
-                  {item.currentWeight && (
-                    <Text variant="bodySm" tone="subdued" paddingBlockStart="50">
-                      Current: {item.currentWeight}
-                    </Text>
-                  )}
-                  <Text variant="bodySm" tone="subdued" paddingBlockStart="50">
-                    Action: {item.suggestion}
-                  </Text>
-                </Box>
-              ))}
-            </BlockStack>
+            <Box paddingBlockStart="200">
+              <BlockStack gap="150">
+                {rec.items.map((item, itemIdx) => (
+                  <Box key={itemIdx} padding="200" background="bg-surface" borderRadius="100">
+                    <BlockStack gap="100">
+                      <Text variant="bodyMd" fontWeight="semibold">• {item.reason}</Text>
+                      <Text variant="bodySm" tone="subdued">
+                        Action: {item.suggestion}
+                      </Text>
+                    </BlockStack>
+                  </Box>
+                ))}
+              </BlockStack>
+            </Box>
           </BlockStack>
         </Box>
       ))}
@@ -213,8 +233,8 @@ function WeightRecommendations({ reasons, caseType, weights }) {
   );
 }
 
-// --- ORDER CASE CARD COMPONENT ---
-function OrderCaseCard({ order, index }) {
+// --- ORDER CASE CARD COMPONENT (Detail View) ---
+function OrderCaseCard({ order }) {
   const reasonsList = order.reasons
     ? order.reasons.split(/[|,\n]/).map((r) => r.trim()).filter(Boolean)
     : [];
@@ -234,17 +254,24 @@ function OrderCaseCard({ order, index }) {
 
   const getOutcomeLabel = () => {
     if (order.caseType === "FALSE_POSITIVE") return "Delivered (Safe Order)";
-    return `${order.outcome} (Risky Order)`;
+    return `${order.outcome} (Risky Order)`; 
   };
 
+  const fullShippingAddress = [
+    order.shippingAddress1,
+    order.shippingCity,
+    order.shippingProvince,
+    order.shippingZip
+  ].filter(Boolean).join(", ");
+
   return (
-    <Card key={order.id}>
-      <BlockStack gap="300">
+    <Card padding="500">
+      <BlockStack gap="500">
         {/* Header */}
         <InlineStack gap="200" align="space-between" blockAlign="center">
           <BlockStack gap="100" grow>
-            <Text as="h3" variant="headingMd">Order #{order.orderId || "N/A"}</Text>
-            <Text tone="subdued" variant="bodySm">
+            <Text as="h3" variant="headingLg">Order {order.orderId || "N/A"}</Text>
+            <Text tone="subdued" variant="bodyMd">
               {formattedDate} • ₹{order.orderValue.toFixed(2)}
             </Text>
           </BlockStack>
@@ -257,80 +284,49 @@ function OrderCaseCard({ order, index }) {
 
         <Divider />
 
-        {/* Customer & Order Details */}
-        <Grid columns={{ xs: 1, md: 2 }}>
+        {/* FULL WIDTH STACKING: NO MORE GRIDS */}
+        <BlockStack gap="400">
+          
           <BlockStack gap="200">
-            <Text variant="headingMd" as="h4" tone="subdued">Customer Details</Text>
-            <BlockStack gap="150">
-              <InlineStack gap="200">
-                <Text tone="subdued" variant="bodySm" minWidth="80px">Name:</Text>
-                <Text variant="bodySm">{order.customerName}</Text>
-              </InlineStack>
-              {order.customerEmail && (
-                <InlineStack gap="200">
-                  <Text tone="subdued" variant="bodySm" minWidth="80px">Email:</Text>
-                  <Text variant="bodySm">{order.customerEmail}</Text>
-                </InlineStack>
-              )}
-              {order.customerPhone && (
-                <InlineStack gap="200">
-                  <Text tone="subdued" variant="bodySm" minWidth="80px">Phone:</Text>
-                  <Text variant="bodySm">{order.customerPhone}</Text>
-                </InlineStack>
-              )}
-            </BlockStack>
+            <Text variant="headingMd" as="h4">Customer Details</Text>
+            <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderWidth="025" borderColor="border">
+              <BlockStack gap="300">
+                <DetailItem label="Name" value={order.customerName} />
+                <DetailItem label="Email" value={order.customerEmail} />
+                <DetailItem label="Phone" value={order.customerPhone} />
+              </BlockStack>
+            </Box>
           </BlockStack>
 
           <BlockStack gap="200">
-            <Text variant="headingMd" as="h4" tone="subdued">Order Details</Text>
-            <BlockStack gap="150">
-              <InlineStack gap="200">
-                <Text tone="subdued" variant="bodySm" minWidth="80px">Payment:</Text>
-                <Text variant="bodySm">{order.paymentGateway || "Unknown"}</Text>
-              </InlineStack>
-              <InlineStack gap="200">
-                <Text tone="subdued" variant="bodySm" minWidth="80px">Status:</Text>
-                <Text variant="bodySm">{order.fulfillmentStatus || "Unknown"}</Text>
-              </InlineStack>
-              <InlineStack gap="200">
-                <Text tone="subdued" variant="bodySm" minWidth="80px">Financial:</Text>
-                <Text variant="bodySm">{order.financialStatus || "Unknown"}</Text>
-              </InlineStack>
-            </BlockStack>
+            <Text variant="headingMd" as="h4">Order Details</Text>
+            <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderWidth="025" borderColor="border">
+              <BlockStack gap="300">
+                <DetailItem label="Payment Gateway" value={order.paymentGateway || "Unknown"} />
+                <DetailItem label="Fulfillment Status" value={order.fulfillmentStatus || "Unknown"} />
+                <DetailItem label="Financial Status" value={order.financialStatus || "Unknown"} />
+              </BlockStack>
+            </Box>
           </BlockStack>
-        </Grid>
 
-        {/* Shipping Address */}
-        {order.shippingAddress1 && (
-          <>
-            <Divider />
-            <BlockStack gap="100">
-              <Text variant="headingMd" as="h4" tone="subdued">Shipping Address</Text>
-              <Text variant="bodySm">
-                {order.shippingAddress1}
-                {order.shippingCity && `, ${order.shippingCity}`}
-                {order.shippingProvince && `, ${order.shippingProvince}`}
-                {order.shippingZip && ` ${order.shippingZip}`}
-              </Text>
+          {fullShippingAddress && (
+            <BlockStack gap="200">
+              <Text variant="headingMd" as="h4">Shipping Location</Text>
+              <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderWidth="025" borderColor="border">
+                <DetailItem label="Address" value={fullShippingAddress} />
+              </Box>
             </BlockStack>
-          </>
-        )}
+          )}
 
-        {/* Risk Assessment */}
-        <Divider />
-        <BlockStack gap="200">
-          <Text variant="headingMd" as="h4" tone="subdued">Model Prediction</Text>
-          <InlineStack gap="300">
-            <BlockStack gap="100">
-              <Text tone="subdued" variant="bodySm">Risk Score</Text>
-              <Badge tone={order.riskLevel === "HIGH" ? "critical" : "success"}>
-                {order.riskScore}% - {order.riskLevel}
-              </Badge>
-            </BlockStack>
-          </InlineStack>
+          <BlockStack gap="200">
+            <Text variant="headingMd" as="h4" tone="subdued">Model Prediction</Text>
+            <Box padding="300" background="bg-surface-secondary" borderRadius="200" borderWidth="025" borderColor="border">
+               <DetailItem label="Original Risk Score" value={`${order.riskScore}% - ${order.riskLevel}`} />
+            </Box>
+          </BlockStack>
+
         </BlockStack>
 
-        {/* Risk Reasons */}
         {reasonsList.length > 0 && (
           <>
             <Divider />
@@ -338,9 +334,9 @@ function OrderCaseCard({ order, index }) {
               <Text variant="headingMd" as="h4" tone="subdued">Risk Factors That Triggered</Text>
               <BlockStack gap="100">
                 {reasonsList.map((reason, idx) => (
-                  <InlineStack key={idx} gap="100" blockAlign="start">
-                    <Text variant="bodySm">•</Text>
-                    <Text variant="bodySm">{reason}</Text>
+                  <InlineStack key={idx} gap="200" blockAlign="start">
+                    <Text variant="bodyMd" tone="subdued">•</Text>
+                    <Text variant="bodyMd">{reason}</Text>
                   </InlineStack>
                 ))}
               </BlockStack>
@@ -348,13 +344,13 @@ function OrderCaseCard({ order, index }) {
           </>
         )}
 
-        {/* Weight Recommendations */}
-        <Divider />
-        <WeightRecommendations 
-          reasons={order.reasons} 
-          caseType={order.caseType}
-          weights={order.settingsSnapshot}
-        />
+        <Box paddingBlockStart="200">
+          <WeightRecommendations 
+            reasons={order.reasons} 
+            caseType={order.caseType}
+            weights={order.settingsSnapshot}
+          />
+        </Box>
       </BlockStack>
     </Card>
   );
@@ -364,7 +360,10 @@ function OrderCaseCard({ order, index }) {
 export default function ModelFineTuning() {
   const data = useLoaderData();
   const navigate = useNavigate();
+  
+  // State for tabs and master-detail routing
   const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedOrder, setSelectedOrder] = useState(null);
 
   if (data.error) {
     return (
@@ -397,97 +396,167 @@ export default function ModelFineTuning() {
 
   const displayOrders = selectedTab === 0 ? falsePositives : falseNegatives;
 
+  const handleTabChange = (selectedTabIndex) => {
+    setSelectedTab(selectedTabIndex);
+    setSelectedOrder(null); // Reset detail view when switching tabs
+  };
+
+  // Dynamic Back Action
+  const backActionConfig = selectedOrder 
+    ? { onAction: () => setSelectedOrder(null) } // Go back to Master List
+    : { onAction: () => navigate("/app/assessments") }; // Go back to main app
+
   return (
     <Page 
-      title="Model Fine-Tuning Dashboard" 
-      subtitle="Review edge cases and adjust model weights"
-      backAction={{ onAction: () => navigate("/app/assessments") }}
+      title={selectedOrder ? `Order Details: ${selectedOrder.orderId || "N/A"}` : "Model Fine-Tuning Dashboard"} 
+      subtitle={selectedOrder ? "Review detailed predictions and edge cases" : "Review edge cases and adjust model weights"}
+      backAction={backActionConfig}
     >
       <Layout>
-        {/* Info Banner */}
-        <Layout.Section>
-          <Banner tone="info">
-            <p>
-              This page shows orders processed by the manual model with edge cases where predictions didn't match outcomes. 
-              Use these cases to fine-tune your model weights for better accuracy. Total manual orders analyzed: <strong>{totalManualOrders}</strong>
-            </p>
-          </Banner>
-        </Layout.Section>
-
-        {/* Tabs */}
-        <Layout.Section>
-          <Card padding="0">
-            <Tabs 
-              tabs={tabs.map(tab => ({ id: tab.id, content: tab.content }))}
-              selected={selectedTab}
-              onSelect={setSelectedTab}
-              fitted
-            />
-          </Card>
-        </Layout.Section>
-
-        {/* Tab Content */}
-        <Layout.Section>
-          {displayOrders.length === 0 ? (
-            <Card>
-              <Box padding="600">
-                <BlockStack gap="300" align="center">
-                  <Icon source={CheckIcon} tone="success" />
-                  <BlockStack gap="100" align="center">
-                    <Text variant="headingMd" as="h3">
-                      {selectedTab === 0 
-                        ? "No False Positives Found!" 
-                        : "No False Negatives Found!"}
-                    </Text>
-                    <Text tone="subdued">
-                      {selectedTab === 0
-                        ? "All HIGH risk orders resulted in issues (no safe orders were wrongly flagged). Your model is performing well!"
-                        : "All LOW risk orders were delivered safely. No risky orders were missed. Great job!"}
-                    </Text>
-                    <Text tone="subdued" variant="bodySm" paddingBlockStart="200">
-                      This page is designed to help you fine-tune the weights used to evaluate orders. When edge cases appear, adjust the weights accordingly to improve accuracy.
-                    </Text>
-                  </BlockStack>
-                </BlockStack>
-              </Box>
-            </Card>
-          ) : (
-            <BlockStack gap="300">
-              <Text variant="headingMd" as="h2">
-                {selectedTab === 0 
-                  ? `${falsePositives.length} False Positive Cases`
-                  : `${falseNegatives.length} False Negative Cases`}
-              </Text>
-              <Text tone="subdued">
-                {selectedTab === 0
-                  ? "These orders were flagged as HIGH risk but delivered successfully. Consider reducing the weights of these risk factors."
-                  : "These orders were flagged as LOW risk but resulted in fraud/chargebacks/cancellations. Consider increasing the weights of these risk factors."}
-              </Text>
-
-              {displayOrders.map((order, idx) => (
-                <OrderCaseCard key={order.id} order={order} index={idx} />
-              ))}
+        
+        {/* CONDITIONAL RENDERING */}
+        {selectedOrder ? (
+          
+          /* DETAIL VIEW */
+          <Layout.Section>
+            <BlockStack gap="400">
+              <OrderCaseCard order={selectedOrder} />
             </BlockStack>
-          )}
-        </Layout.Section>
+          </Layout.Section>
 
-        {/* Footer Actions */}
-        <Layout.Section>
-          <InlineStack gap="200">
-            <Button 
-              onClick={() => navigate("/app/risk-engine")} 
-              variant="primary"
-            >
-              Go to Weight Configuration
-            </Button>
-            <Button 
-              onClick={() => navigate("/app/assessments")}
-              variant="secondary"
-            >
-              Back to Assessments
-            </Button>
-          </InlineStack>
-        </Layout.Section>
+        ) : (
+          
+          /* MASTER VIEW (LIST) */
+          <>
+            <Layout.Section>
+              <Banner tone="info">
+                <p>
+                  This page shows orders processed by the manual model with edge cases where predictions didn't match outcomes. 
+                  Use these cases to fine-tune your model weights for better accuracy. Total manual orders analyzed: <strong>{totalManualOrders}</strong>
+                </p>
+              </Banner>
+            </Layout.Section>
+
+            <Layout.Section>
+              <Card padding="0">
+                <Tabs 
+                  tabs={tabs.map(tab => ({ id: tab.id, content: tab.content }))}
+                  selected={selectedTab}
+                  onSelect={handleTabChange}
+                  fitted
+                />
+              </Card>
+            </Layout.Section>
+
+            <Layout.Section>
+              {displayOrders.length === 0 ? (
+                <Card>
+                  <Box padding="600">
+                    <BlockStack gap="300" align="center">
+                      <Icon source={CheckIcon} tone="success" />
+                      <BlockStack gap="100" align="center">
+                        <Text variant="headingMd" as="h3">
+                          {selectedTab === 0 
+                            ? "No False Positives Found!" 
+                            : "No False Negatives Found!"}
+                        </Text>
+                        <Text tone="subdued">
+                          {selectedTab === 0
+                            ? "All HIGH risk orders resulted in issues. Your model is performing well!"
+                            : "All LOW risk orders were delivered safely. Great job!"}
+                        </Text>
+                      </BlockStack>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              ) : (
+                <BlockStack gap="400">
+                  <Box paddingBlockEnd="200">
+                    <BlockStack gap="100">
+                      <Text variant="headingLg" as="h2">
+                        {selectedTab === 0 
+                          ? `${falsePositives.length} False Positive Cases`
+                          : `${falseNegatives.length} False Negative Cases`}
+                      </Text>
+                      <Text tone="subdued" variant="bodyMd">
+                        Click on an order in the list below to investigate the specific details and adjust weights.
+                      </Text>
+                    </BlockStack>
+                  </Box>
+
+                  {/* MASTER LIST (MINIMAL DETAILS) */}
+                  <Card padding="0">
+                    <IndexTable
+                      resourceName={{ singular: 'order', plural: 'orders' }}
+                      itemCount={displayOrders.length}
+                      selectable={false}
+                      headings={[
+                        { title: 'Order ID' },
+                        { title: 'Date' },
+                        { title: 'Customer' },
+                        { title: 'Score' },
+                        { title: 'Outcome' },
+                      ]}
+                    >
+                      {displayOrders.map((order, index) => {
+                        const getOutcomeColor = () => order.caseType === "FALSE_POSITIVE" ? "success" : "critical";
+                        const getOutcomeLabel = () => order.caseType === "FALSE_POSITIVE" ? "Delivered" : order.outcome;
+                        
+                        const formattedDate = new Intl.DateTimeFormat('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric'
+                        }).format(new Date(order.createdAt));
+
+                        return (
+                          <IndexTable.Row
+                            id={order.id}
+                            key={order.id}
+                            position={index}
+                            onClick={() => setSelectedOrder(order)} // Opens Detailed View
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <IndexTable.Cell>
+                              <Text variant="bodyMd" fontWeight="bold" as="span">
+                                {order.orderId || "N/A"}
+                              </Text>
+                            </IndexTable.Cell>
+                            <IndexTable.Cell>{formattedDate}</IndexTable.Cell>
+                            <IndexTable.Cell>{order.customerName}</IndexTable.Cell>
+                            <IndexTable.Cell>
+                              <Badge tone={order.riskLevel === "HIGH" ? "critical" : "success"}>
+                                {order.riskScore}%
+                              </Badge>
+                            </IndexTable.Cell>
+                            <IndexTable.Cell>
+                              <Badge tone={getOutcomeColor()}>
+                                {getOutcomeLabel()}
+                              </Badge>
+                            </IndexTable.Cell>
+                          </IndexTable.Row>
+                        );
+                      })}
+                    </IndexTable>
+                  </Card>
+                </BlockStack>
+              )}
+            </Layout.Section>
+            
+            <Layout.Section>
+              <Box paddingBlockStart="200" paddingBlockEnd="400">
+                <InlineStack gap="300">
+                  <Button 
+                    onClick={() => navigate("/app/risk-engine")} 
+                    variant="primary"
+                    size="large"
+                  >
+                    Go to Weight Configuration
+                  </Button>
+                </InlineStack>
+              </Box>
+            </Layout.Section>
+          </>
+        )}
       </Layout>
     </Page>
   );

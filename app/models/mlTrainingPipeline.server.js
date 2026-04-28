@@ -1,9 +1,5 @@
 import prisma from "../db.server.js";
 
-/**
- * Extracts 20 ML features for an order and saves them into zippyy_ml_training_data
- * when the order hits a terminal state (RTO, DELIVERED, DISPUTE).
- */
 export async function captureMLTrainingData(shop, orderId, terminalState) {
   try {
     console.log(`[ML Pipeline] Capturing terminal state '${terminalState}' for order ${orderId}`);
@@ -18,8 +14,6 @@ export async function captureMLTrainingData(shop, orderId, terminalState) {
       return;
     }
 
-    // 2. We only want to insert ONCE. Let's see if we already captured this order.
-    // If it exists, we just update the terminal flags.
     const existingRow = await prisma.zippyy_ml_training_data.findUnique({
       where: { orderId: orderId }
     });
@@ -39,7 +33,6 @@ export async function captureMLTrainingData(shop, orderId, terminalState) {
       return;
     }
 
-    // --- 3. Compute the 20 features as they were AT CHECKOUT ---
 
     // Feature 1: Zipcode
     const cleanZip = order.shippingZip ? order.shippingZip.replace(/[\s-]/g, "") : "000000";
@@ -69,7 +62,7 @@ export async function captureMLTrainingData(shop, orderId, terminalState) {
     const is_holiday_season = (month === 11 || month === 12) ? 1 : 0;
     const is_rainy_season = (month >= 6 && month <= 9) ? 1 : 0;
 
-    // We need historical data exactly UP TO the point this order was placed.
+    //  historical data exactly UP TO the point this order was placed.
     // This prevents data leakage (future orders changing the stats of past orders).
     const history = await prisma.shopify_store_order.findMany({
       where: {

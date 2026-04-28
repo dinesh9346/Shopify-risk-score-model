@@ -6,24 +6,26 @@
 export const WHATSAPP_TEMPLATES = {
   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
   RSM_ADDRESS_VERIFY: 'address_verification',
-  SHIPMENT_CREATED: 'in_shipment_created_wa_message',
   SHIPMENT_IN_TRANSIT: 'tracking_link_in_transit_new',
+  PAYMENT_CONFIRMATION:'order_payment_confirmed',
+  SHIPMENT_CREATED:'rsm_order_fully_packed',
   SHIPMENT_OUT_FOR_DELIVERY_PREPAID: 'tracking_link_out_for_delivery_prepaid_new2',
   SHIPMENT_OUT_FOR_DELIVERY_COD: 'tracking_link_out_for_delivery_cod_new',
   SHIPMENT_DELIVERED: 'tracking_link_delivered_new2',
   SHIPMENT_UNDELIVERED: 'in_shipment_undelivered',
   ORDER_VALIDATION: 'Order_delivery_confirmation',
-  NDR_VERIFICATION: 'ndr_verification_in',
 };
 
 export const WHATSAPP_CAMPAIGNS = {
-  [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment booked',
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'risk_score_model_order_confirmation',
-  [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'address_verification'
+  [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'address_verification',
+  [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'order_payment_confirmed',
+  [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'rsm_order_fully_packed'
 };
 
 export const TEMPLATE_DESCRIPTIONS = {
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'Used for order confirmation notifications',
+  [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'Used for payment confirmation notifications',
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment created notification',
   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'Shipment in transit with tracking link',
   [WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_PREPAID]: 'Out for delivery (Prepaid)',
@@ -42,20 +44,18 @@ const TEMPLATE_PARAM_ORDER = {
     'productDetails',
     'orderAmount'
   ],
+  [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: [
+    'customerName',
+    'orderId',
+    'sellerCompanyName'
+  ],
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: [
     'customerName',
     'orderId',
+    'sellerCompanyName',
     'productDetails',
     'orderType',
-    'orderAmount',
-    'sellerCompanyName'
-  ],
-  [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: [
-    'customerName',
-    'orderId',
-    'productDetails',
-    'orderType',
-    'sellerCompanyName'
+    'orderAmount'
   ],
   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: [
     'customerName',      // {{1}}
