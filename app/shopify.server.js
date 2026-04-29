@@ -11,9 +11,6 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { triggerBulkOrderSync } from "./models/Sync.server";
 import { startAllQueues } from "./models/queue.server.js";
-
-// Call this once when your server boots up!
-startAllQueues();
 import { startScheduler } from "./models/scheduler.server.js";
 export const MONTHLY_PLAN = 'Zippyy Pro Monthly';
 const shopify = shopifyApp({
@@ -147,15 +144,13 @@ webhooks: {
 });
 // Boot up ALL background workers safely
 if (process.env.NODE_ENV === "production") {
-  startQueueListener().catch(console.error);
-  startOutboundQueueListener().catch(console.error);
+  startAllQueues().catch(console.error);
   startScheduler();
 } else {
-  // In development, prevent Vite from starting 100 queues on every save
-  if (!global.__queueListenerStarted) {
-    global.__queueListenerStarted = true;
-    startQueueListener().catch(console.error);
-    startOutboundQueueListener().catch(console.error);
+  // In development, prevent Vite from starting 100 queues on every file save
+  if (!global.__backgroundWorkersStarted) {
+    global.__backgroundWorkersStarted = true;
+    startAllQueues().catch(console.error); // <--- Starts Inbound, Outbound, and Notifications
     startScheduler();
   }
 }

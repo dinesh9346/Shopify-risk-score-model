@@ -1,26 +1,28 @@
-/**
- * WhatsApp Template Configuration
- * These templates must be created in your MyOperator WhatsApp Business Account
- */
+export const EMAIL_TEMPLATES = {
+  SHIPMENT_CREATED: "d-aa96a93348b34b0ca20c10795f4cd2be",
+  IN_TRANSIT: "d-03e799dd473e4c89a50467b2ee4553b8",
+  OUT_FOR_DELIVERY: "d-9fa970d027c14e52b1a0173f5b947ab4",
+  DELIVERED: "d-9961bddf4644410c8aa65c8c94d633e4",
+  CANCELLED: "d-7efe100129d744c2aed70ea75cc4a95f",
+  REFUNDED: "d-6fbb6446de9e4cb29445f6140c5f479b",
+};
 
 export const WHATSAPP_TEMPLATES = {
   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
   RSM_ADDRESS_VERIFY: 'address_verification',
-  SHIPMENT_IN_TRANSIT: 'tracking_link_in_transit_new',
+  SHIPMENT_IN_TRANSIT: 'rsm_shipment_in_transit',
   PAYMENT_CONFIRMATION:'order_payment_confirmed',
   SHIPMENT_CREATED:'rsm_order_fully_packed',
-  SHIPMENT_OUT_FOR_DELIVERY_PREPAID: 'tracking_link_out_for_delivery_prepaid_new2',
-  SHIPMENT_OUT_FOR_DELIVERY_COD: 'tracking_link_out_for_delivery_cod_new',
-  SHIPMENT_DELIVERED: 'tracking_link_delivered_new2',
-  SHIPMENT_UNDELIVERED: 'in_shipment_undelivered',
-  ORDER_VALIDATION: 'Order_delivery_confirmation',
+  SHIPMENT_DELIVERED: 'rsm_order_delivered'
 };
 
 export const WHATSAPP_CAMPAIGNS = {
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'risk_score_model_order_confirmation',
   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'address_verification',
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'order_payment_confirmed',
-  [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'rsm_order_fully_packed'
+  [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'rsm_order_fully_packed',
+  [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'rsm_shipment_in_transit_new',
+  [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: 'rsm_order_delivered',
 };
 
 export const TEMPLATE_DESCRIPTIONS = {
@@ -28,12 +30,7 @@ export const TEMPLATE_DESCRIPTIONS = {
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'Used for payment confirmation notifications',
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment created notification',
   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'Shipment in transit with tracking link',
-  [WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_PREPAID]: 'Out for delivery (Prepaid)',
-  [WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_COD]: 'Out for delivery (COD)',
   [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: 'Shipment delivered',
-  [WHATSAPP_TEMPLATES.SHIPMENT_UNDELIVERED]: 'Shipment undelivered',
-  [WHATSAPP_TEMPLATES.NDR_VERIFICATION]: 'NDR verification request',
-  [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'Address verification and edit link upon order confirm',
 };
 
 const TEMPLATE_PARAM_ORDER = {
@@ -60,6 +57,23 @@ const TEMPLATE_PARAM_ORDER = {
   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: [
     'customerName',      // {{1}}
     'shippingAddress'   // {{2}}
+  ],
+  [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: [
+    'customerName',
+    'orderId',  
+    'productDetails',
+    'orderType',
+    'orderAmount',
+     'trackingUrl' ,
+    'sellerCompanyName'
+         // For Dynamic CTA Button
+  ],
+  [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: [
+    'customerName',
+    'orderId',  
+    'productDetails',
+    'orderType',
+    'sellerCompanyName'
   ]
 };
 
@@ -71,7 +85,8 @@ const DEFAULT_TEMPLATE_VALUES = {
   orderType: 'Standard',
   orderAmount: '0',
   shippingAddress: 'Address not provided',
-  editUrl: 'N/A'
+  editUrl: 'N/A',
+  trackingUrl: 'N/A'
 };
 
 /**
@@ -125,117 +140,3 @@ export function formatTemplateParams(templateId, data = {}) {
 
 
 
-
-
-
-
-
-
-
-// /**
-//  * WhatsApp Template Configuration
-//  * These templates must be created in your MyOperator WhatsApp Business Account
-//  */
-
-// export const WHATSAPP_TEMPLATES = {
-//   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
-//   RSM_ADDRESS_VERIFY: 'rsm_order_confirmation',
-//   SHIPMENT_CREATED: 'in_shipment_created_wa_message',
-//   SHIPMENT_IN_TRANSIT: 'tracking_link_in_transit_new',
-//   SHIPMENT_OUT_FOR_DELIVERY_PREPAID: 'tracking_link_out_for_delivery_prepaid_new2',
-//   SHIPMENT_OUT_FOR_DELIVERY_COD: 'tracking_link_out_for_delivery_cod_new',
-//   SHIPMENT_DELIVERED: 'tracking_link_delivered_new2',
-//   SHIPMENT_UNDELIVERED: 'in_shipment_undelivered',
-//   ORDER_VALIDATION: 'Order_delivery_confirmation',
-//   NDR_VERIFICATION: 'ndr_verification_in',
-// };
-
-// export const WHATSAPP_CAMPAIGNS = {
-//   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment booked',
-//   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'risk_score_model_order_confirmation',
-//   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'rsm_order_confirmation'
-
-// };
-
-// export const TEMPLATE_DESCRIPTIONS = {
-//   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'Used for order confirmation notifications',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment created notification',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'Shipment in transit with tracking link',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_PREPAID]: 'Out for delivery (Prepaid)',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_OUT_FOR_DELIVERY_COD]: 'Out for delivery (COD)',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: 'Shipment delivered',
-//   [WHATSAPP_TEMPLATES.SHIPMENT_UNDELIVERED]: 'Shipment undelivered',
-//   [WHATSAPP_TEMPLATES.NDR_VERIFICATION]: 'NDR verification request',
-// };
-
-// const TEMPLATE_PARAM_ORDER = {
-//   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: [
-//     'customerName',
-//     'sellerCompanyName',
-//     'orderId',
-//     'productDetails',
-//     'orderAmount'
-//   ],
-//   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: [
-//     'customerName',
-//     'orderId',
-//     'productDetails',
-//     'orderType',
-//     'orderAmount',
-//     'sellerCompanyName'
-//   ],
-//   [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: [
-//     'customerName',
-//     'orderId',
-//     'productDetails',
-//     'orderType',
-//     'sellerCompanyName'
-//   ]
-// };
-
-// const DEFAULT_TEMPLATE_VALUES = {
-//   customerName: 'Customer',
-//   sellerCompanyName: 'Zippyy',
-//   orderId: 'N/A',
-//   productDetails: 'Order Items',
-//   orderType: 'Standard',
-//   orderAmount: '0'
-// };
-
-// /**
-//  * Map MyOperator template parameters to our payload
-//  * MyOperator expects specific field names for template parameters
-//  */
-// export function formatTemplateParams(templateId, data = {}) {
-//   const params = [];
-//   const orderedFields = TEMPLATE_PARAM_ORDER[templateId];
-
-//   if (orderedFields) {
-//     for (const field of orderedFields) {
-//       const value = data[field] ?? DEFAULT_TEMPLATE_VALUES[field] ?? '';
-//       params.push(String(value));
-//     }
-//     return params;
-//   }
-
-//   switch (templateId) {
-//     case WHATSAPP_TEMPLATES.NDR_VERIFICATION:
-//       if (data.trackingId) params.push({ type: 'text', text: data.trackingId });
-//       if (data.ndrCode) params.push({ type: 'text', text: data.ndrCode });
-//       break;
-
-//     default:
-//       // Generic template params
-//       if (data.components?.length) {
-//         return data.components;
-//       }
-//       if (Array.isArray(data.templateParams)) {
-//         return data.templateParams;
-//       }
-//       if (Object.keys(data).length) {
-//         return Object.values(data).map(value => String(value));
-//       }
-//   }
-
-//   return params;
-// }

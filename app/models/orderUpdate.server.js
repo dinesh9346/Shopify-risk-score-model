@@ -3,7 +3,17 @@ import { updateSingleBuyerProfile } from "./Sync.server.js";
 import { detectOrderStateChanges, updateStoredOrderState } from "./orderStateDetector.server.js";
 import { enqueueLifecycleNotification } from "./queue.server.js";
 import { captureMLTrainingData } from "./mlTrainingPipeline.server.js";
-
+const STAGE_RANKS = {
+  "ORDER_CONFIRMATION": 1,
+  "PAYMENT_CONFIRMED": 2,
+  "ORDER_FULLY_PACKED": 3,
+  "SHIPMENT_CREATED": 3,
+  "IN_TRANSIT": 4,
+  "OUT_FOR_DELIVERY": 5,
+  "DELIVERED": 6,
+  "ORDER_CANCELLED": 99,
+  "ORDER_REFUNDED": 99
+};
 function getProductDetailsFromPayload(payload) {
   const items = payload?.line_items || payload?.lineItems || [];
   if (!Array.isArray(items) || items.length === 0) return null;
@@ -92,10 +102,21 @@ export async function processOrderUpdate(shop, payload) {
     // 3. UPDATE STORED STATE FOR NEXT COMPARISON
     await updateStoredOrderState(shop, payload);
 
-    // 4. QUEUE LIFECYCLE NOTIFICATIONS FOR EACH STATE CHANGE
-    const customerEmail = payload.email || payload.customer?.email || null;
-    const customerPhone = payload.shipping_address?.phone || payload.customer?.phone || null;
-    const customerName = [payload.customer?.first_name, payload.customer?.last_name].filter(Boolean).join(' ') || 'Customer';
+   // 4. QUEUE LIFECYCLE NOTIFICATIONS
+   // Fallback chain: Top-level email -> Customer object email -> Database email
+   const customerEmail = payload.email || 
+                         payload.customer?.email || 
+                         existingOrder?.customerEmail || // Fallback to DB
+                         null;
+
+   const customerPhone = payload.shipping_address?.phone || 
+                         payload.customer?.phone || 
+                         existingOrder?.customerPhone || // Fallback to DB
+                         null;
+
+   const customerName = [payload.customer?.first_name, payload.customer?.last_name].filter(Boolean).join(' ') || 
+                        existingOrder?.firstName || 
+                        'Customer';
     const orderId = payload.admin_graphql_api_id;
 
     const productDetails = getProductDetailsFromPayload(payload) || "Order Items";
@@ -105,6 +126,19 @@ export async function processOrderUpdate(shop, payload) {
 
     for (const change of stateChanges) {
       try {
+        // --- THE GOLDEN RULE GUARDRAIL ---
+        // Grab the rank of what is currently in the DB, and the rank of the incoming webhook
+        const currentRank = STAGE_RANKS[existingOrder?.shipmentStatus] || 0;
+        const incomingRank = STAGE_RANKS[change.stage] || 0;
+
+        // If the incoming webhook is trying to drag us backwards in time, block it!
+        // (We ignore 99 because Cancellations/Refunds can happen at any time)
+        if (incomingRank <= currentRank && incomingRank !== 99) {
+          console.log(`[State Detector]  Ignored outdated state: ${change.stage}. Order is already at rank ${currentRank} (${existingOrder?.shipmentStatus || 'New'})`);
+          continue; // Skip queuing this specific notification and move to the next loop!
+        }
+  
+
         await enqueueLifecycleNotification(shop, orderId, change.stage, {
           customerEmail,
           customerPhone,
