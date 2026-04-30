@@ -193,6 +193,9 @@ export class WhatsAppAdapter {
         let mappedButtons = templateData?.buttons || [];
 
         if (dynamicButtonValue && mappedButtons.length === 0) {
+          // Include orderId in button parameters so when action is triggered, we know which order it's for
+          const orderIdParam = templateData?.orderId ? `${dynamicButtonValue}?orderId=${encodeURIComponent(templateData.orderId)}` : dynamicButtonValue;
+          
           mappedButtons = [
             {
               type: "button",
@@ -201,12 +204,12 @@ export class WhatsAppAdapter {
               parameters: [
                 {
                   type: "text",
-                  text: String(dynamicButtonValue)
+                  text: String(orderIdParam)
                 }
               ]
             }
           ];
-          console.log(`[WhatsAppAdapter] Mapped dynamic URL/ID to button parameter for ${campaignName}`);
+          console.log(`[WhatsAppAdapter] Mapped dynamic URL with orderId for order ${templateData?.orderId} to button parameter for ${campaignName}`);
         }
 
         // We use the flat structure for all API campaigns. 

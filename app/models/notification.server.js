@@ -8,7 +8,7 @@ export class NotificationService {
     this.whatsappAdapter = new WhatsAppAdapter();
   }
 
-  async sendEmailNotification({ shop, recipient, subject, html, text, templateId, templateData }) {
+  async sendEmailNotification({ shop, recipient, subject, html, text, templateId, templateData, orderId, localOrderId }) {
     try {
       // Create notification record
       const notification = await prisma.notification.create({
@@ -18,6 +18,8 @@ export class NotificationService {
           recipient,
           templateId,
           status: 'PENDING',
+          orderId,        // Link to specific order
+          localOrderId,   // Local database order ID
         },
       });
 
@@ -59,8 +61,10 @@ export class NotificationService {
     }
   }
 
-  async sendWhatsAppNotification({ shop, recipient, message, templateId, templateData, customerName }) {
+  async sendWhatsAppNotification({ shop, recipient, message, templateId, templateData, customerName, orderId, localOrderId }) {
     try {
+      console.log(`[NotificationService] Sending WhatsApp - orderId: ${orderId}, localOrderId: ${localOrderId}, recipient: ${recipient}, templateId: ${templateId}`);
+      
       // Create notification record
       const notification = await prisma.notification.create({
         data: {
@@ -69,6 +73,8 @@ export class NotificationService {
           recipient,
           templateId,
           status: 'PENDING',
+          orderId,        // Link to specific order
+          localOrderId,   // Local database order ID
         },
       });
 

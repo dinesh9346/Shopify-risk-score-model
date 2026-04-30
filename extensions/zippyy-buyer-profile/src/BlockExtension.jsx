@@ -4,9 +4,16 @@ import { useState, useEffect } from 'preact/hooks';
 
 // Dynamically swapped by the Shopify CLI
 /** @ts-ignore */
-const APP_URL = process.env.APP_URL;
+const RAW_APP_URL = process.env.APP_URL;
+
+// FIX: Strip the CLI port if it exists so ngrok doesn't crash
+const APP_URL = RAW_APP_URL ? RAW_APP_URL.replace(/:\d+$/, '') : '';
+
+console.log("[ZIPPYY-DEBUG] [GLOBAL] RAW_APP_URL from env:", RAW_APP_URL);
+console.log("[ZIPPYY-DEBUG] [GLOBAL] Cleaned APP_URL used for fetch:", APP_URL);
 
 export default async () => {
+  console.log("[ZIPPYY-DEBUG] [MOUNT] Extension starting render...");
   render(<Extension />, document.body);
 }
 
@@ -15,7 +22,7 @@ function Extension() {
   const shopifyApi = typeof shopify !== 'undefined' ? shopify : null;
   
   if (!shopifyApi) {
-    console.error("[ERROR] Shopify API not available");
+    console.error("[ZIPPYY-DEBUG] [ERROR] Shopify API not available");
     return (
       <s-admin-block heading="Zippyy Buyer Profile">
         <s-banner tone="critical">
@@ -28,11 +35,6 @@ function Extension() {
 
   const { data } = shopifyApi;
   
-  console.log("[DEBUG] shopify.data available:", !!data);
-  console.log("[DEBUG] shopify.data type:", typeof data);
-  console.log("[DEBUG] shopify.data keys:", data ? Object.keys(data) : 'null');
-  console.log("[DEBUG] full shopify.data:", JSON.stringify(data, null, 2));
-  
   // Try multiple ways to get the order ID
   /** @type {string | null} */
   let orderGid = null;
@@ -40,53 +42,43 @@ function Extension() {
   let orderId = null;
   
   try {
-    // Method 1: Direct data.id property (for order details blocks)
-    /** @ts-ignore - data shape varies based on Shopify context */
+    // Method 1: Direct data.id property
+    /** @ts-ignore */
     if (data?.id) {
       /** @ts-ignore */
       orderGid = String(data.id);
-      console.log("[DEBUG] Found order ID via data.id:", orderGid);
     } 
     // Method 2: data.order object
-    /** @ts-ignore - data shape varies based on Shopify context */
+    /** @ts-ignore */
     else if (data?.order?.id) {
       /** @ts-ignore */
       orderGid = String(data.order.id);
-      console.log("[DEBUG] Found order ID via data.order.id:", orderGid);
     }
     // Method 3: selected array (fallback)
-    /** @ts-ignore - data shape varies based on Shopify context */
+    /** @ts-ignore */
     else if (data?.selected?.[0]?.id) {
       /** @ts-ignore */
       orderGid = String(data.selected[0].id);
-      console.log("[DEBUG] Found order ID via data.selected[0].id:", orderGid);
     }
     
-    // Extract numeric ID from GraphQL ID (gid://shopify/Order/123456789)
+    // Extract numeric ID
     if (orderGid) {
       const extracted = orderGid.includes('/') ? orderGid.split('/').pop() : orderGid;
       orderId = extracted || null;
-      console.log("[DEBUG] Extracted numeric orderId:", orderId);
+      console.log("[ZIPPYY-DEBUG] [INIT] Extracted orderId:", orderId);
     } else {
-      console.warn("[DEBUG] Could not find order ID in data object");
-      console.log("[DEBUG] data object keys available:", data ? Object.keys(data) : 'data is null/undefined');
+      console.warn("[ZIPPYY-DEBUG] [INIT] Could not find order ID in data object");
     }
   } catch (err) {
-    console.error("[ERROR] Exception while extracting order ID:", err);
+    console.error("[ZIPPYY-DEBUG] [ERROR] Exception while extracting order ID:", err);
   }
 
   const [loading, setLoading] = useState(true);
   const [riskData, setRiskData] = useState(null);
   const [error, setError] = useState('');
 
-  // Log initial state
   useEffect(() => {
-    console.log("[INIT] Component mounted with orderId:", orderId);
-    console.log("[INIT] APP_URL:", APP_URL);
-    console.log("[INIT] shopify object available:", typeof shopify !== 'undefined');
-  }, []);
-
-  useEffect(() => {
+    console.log("[ZIPPYY-DEBUG] [EFFECT] Component mounted. orderId:", orderId);
     let isMounted = true;
     /** @type {any} */
     let timeoutId;
@@ -94,25 +86,29 @@ function Extension() {
     let attempt = 0;
 
     async function fetchRiskProfile() {
-      if (!orderId || !isMounted) return;
+      console.log(`[ZIPPYY-DEBUG] [FETCH-START] Attempt ${attempt + 1}. orderId exists? ${!!orderId}, isMounted? ${isMounted}`);
+      
+      if (!orderId || !isMounted) {
+        console.log(`[ZIPPYY-DEBUG] [FETCH-ABORT] Missing orderId or component unmounted.`);
+        return;
+      }
       attempt++;
       
-      console.log(`[FETCH-${attempt}] Attempting to fetch profile for orderId: ${orderId}`);
-      console.log(`[FETCH-${attempt}] APP_URL: ${APP_URL}`);
-      console.log(`[FETCH-${attempt}] Full URL: ${APP_URL}/api/buyer-profile?orderId=${encodeURIComponent(orderId)}`);
-
       try {
-        // 1. Get auth token - Reverted back to the correct Admin UI Extension API
+        console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Requesting auth token from Shopify...`);
         if (!shopifyApi?.auth?.idToken) {
           throw new Error("shopifyApi.auth.idToken not available");
         }
         
+        // POTENTIAL FREEZE POINT 1: Getting the token
         const token = await shopifyApi.auth.idToken();
-        console.log(`[FETCH-${attempt}] Got auth token successfully`);
+        console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Auth token received successfully!`);
         
         const url = `${APP_URL}/api/buyer-profile?orderId=${encodeURIComponent(orderId)}`;
-        console.log(`[FETCH-${attempt}] Fetching from URL: ${url}`);
+        console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Initiating network fetch to: ${url}`);
         
+        // POTENTIAL FREEZE POINT 2: The actual fetch
+        const fetchStartTime = Date.now();
         const response = await fetch(url, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -121,51 +117,49 @@ function Extension() {
           },
         });
 
-        console.log(`[FETCH-${attempt}] Response status: ${response.status}`);
-        console.log(`[FETCH-${attempt}] Response OK: ${response.ok}`);
+        console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Network fetch completed in ${Date.now() - fetchStartTime}ms. Status: ${response.status}`);
         
         if (response.ok) {
            const result = await response.json();
-           console.log(`[FETCH-${attempt}] Response data:`, result);
+           console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] JSON parsed:`, result);
            
-           // 2. SUCCESS: Got data
            if (result.profile && isMounted) {
+             console.log(`[ZIPPYY-DEBUG] [SUCCESS] Profile found! Setting data and ending loading state.`);
              setRiskData(result.profile);
-             setLoading(false);
-             console.log(`[FETCH-${attempt}] SUCCESS! Got profile data`);
+             setLoading(false); // ENDS LOADING
              return; 
            } else {
-             console.warn(`[FETCH-${attempt}] Response received but no profile in data`);
+             console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Request OK, but no profile object in response.`);
            }
         } else {
           const errorText = await response.text();
-          console.error(`[FETCH-${attempt}] HTTP Error ${response.status}: ${errorText}`);
+          console.error(`[ZIPPYY-DEBUG] [FETCH-${attempt}] HTTP Error ${response.status}: ${errorText}`);
           setError(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
         }
 
-        // 3. RACE CONDITION: Try again with backoff
+        // RACE CONDITION: Try again with backoff
         if (attempt < maxAttempts && isMounted) {
           const delay = Math.pow(2, attempt - 1) * 1000; 
-          console.log(`[FETCH-${attempt}] Retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`);
+          console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Retrying in ${delay}ms...`);
           timeoutId = setTimeout(fetchRiskProfile, delay);
         } else if (isMounted) {
-          console.warn(`[FETCH-${attempt}] Max attempts reached`);
-          setLoading(false);
+          console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Max attempts reached (Normal path). Forcing loading to FALSE.`);
+          setLoading(false); // FAIL-SAFE: ENDS LOADING
           if (!error) setError(`No data after ${maxAttempts} attempts`);
         }
 
       } catch (errorObj) {
         const errorMsg = errorObj instanceof Error ? errorObj.message : String(errorObj);
-        console.error(`[FETCH-${attempt}] Error caught:`, errorMsg);
+        console.error(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Catch Block Error:`, errorMsg);
         setError(`Error (attempt ${attempt}): ${errorMsg}`);
         
         if (attempt < maxAttempts && isMounted) {
            const delay = Math.pow(2, attempt - 1) * 1000;
-           console.log(`[FETCH-${attempt}] Retrying in ${delay}ms`);
+           console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Retrying in ${delay}ms after error...`);
            timeoutId = setTimeout(fetchRiskProfile, delay);
         } else if (isMounted) {
-           console.warn(`[FETCH-${attempt}] Max attempts reached`);
-           setLoading(false);
+           console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Max attempts reached (Error path). Forcing loading to FALSE.`);
+           setLoading(false); // FAIL-SAFE: ENDS LOADING
         }
       }
     }
@@ -173,16 +167,17 @@ function Extension() {
     // Start the first fetch immediately
     fetchRiskProfile();
 
-    // Cleanup if the merchant closes the page before polling finishes
+    // Cleanup
     return () => {
+      console.log("[ZIPPYY-DEBUG] [CLEANUP] Component unmounting, clearing timeouts.");
       isMounted = false;
       clearTimeout(timeoutId);
     };
   }, [orderId]);
 
-  // UI RENDER LOGIC 
+
+  // UI RENDER LOGIC (Untouched)
   
-  // Show error or loading state
   if (!orderId) {
     return (
       <s-admin-block heading="Zippyy Buyer Profile">
@@ -264,7 +259,6 @@ function Extension() {
 
   return (
     <s-admin-block heading="Zippyy Buyer Profile">
-      {/* Changed outer gap to "tight" to save vertical space */}
       <s-stack direction="block" gap="small">
 
         <s-banner tone={bannerTone}>
@@ -293,14 +287,16 @@ function Extension() {
 
         <s-button onClick={() => {
             if (orderId) {
-              // FIXED TO USE SHOPIFY NAVIGATION API (retained fix)
               shopifyApi.navigation.navigate(`shopify:admin/apps/new-risk-score/app/buyer-profile?orderId=${encodeURIComponent(orderId)}`);
             }
         }}>
           View Full Buyer's Profile
         </s-button>
+        
 
       </s-stack>
+      
     </s-admin-block>
+    
   );
 }

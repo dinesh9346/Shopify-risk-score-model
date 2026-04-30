@@ -399,7 +399,9 @@ export async function startNotificationQueueListener() {
                       productDetails: orderData?.productDetails || "Order Items",
                       orderAmount: orderData?.orderAmount || 0,
                       sellerCompanyName: finalCompanyName
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 if (customerEmail) {
@@ -419,7 +421,9 @@ export async function startNotificationQueueListener() {
                       destination_address_city: orderData?.shippingCity || "",
                       destination_address_state: orderData?.shippingProvince || "",
                       seller_company_name: finalCompanyName
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 } else {
                   console.warn(`[LIFECYCLE WARNING] Skipped Email for ${cleanOrderId}: No email address found in payload.`);
@@ -433,7 +437,9 @@ export async function startNotificationQueueListener() {
                     shop,
                     recipient: customerEmail,
                     subject: `Payment Confirmed for Order #${cleanOrderId}`,
-                    text: `Hi ${customerName},\n\nWe've received your payment. Your order is being prepared for shipment.\n\nOrder ID: ${cleanOrderId}`
+                    text: `Hi ${customerName},\n\nWe've received your payment. Your order is being prepared for shipment.\n\nOrder ID: ${cleanOrderId}`,
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 if (customerPhone) {
@@ -445,7 +451,9 @@ export async function startNotificationQueueListener() {
                       customerName,
                       orderId: cleanOrderId,
                       sellerCompanyName: finalCompanyName
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -464,7 +472,9 @@ export async function startNotificationQueueListener() {
                       orderType: orderData?.orderType || "Standard",
                       orderAmount: orderData?.orderAmount || 0,
                       sellerCompanyName: finalCompanyName
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                if (customerEmail) {
@@ -482,7 +492,9 @@ export async function startNotificationQueueListener() {
                       destination_address_name: customerName,
                       destination_address_city: orderData?.shippingCity || "",
                       destination_address_state: orderData?.shippingProvince || ""
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -503,7 +515,9 @@ export async function startNotificationQueueListener() {
                       trackingUrl: orderData?.trackingUrl || "Link not generated yet", // {{6}}
                       sellerCompanyName: finalCompanyName,                        // {{7}}
                       
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 if (customerEmail) {
@@ -516,7 +530,9 @@ export async function startNotificationQueueListener() {
                       order_number: cleanOrderId,
                       tracking_url: orderData?.trackingUrl || "Link not generated yet",
                       carrier_image_url: "https://track.zippyy.ai/default-carrier.png" // Fallback if needed
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -534,7 +550,9 @@ export async function startNotificationQueueListener() {
                       productDetails: orderData?.productDetails || "Order Items",
                       orderType: orderData?.orderType || "Standard",
                       sellerCompanyName: finalCompanyName,
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 if (customerEmail) {
@@ -548,7 +566,9 @@ export async function startNotificationQueueListener() {
                       tracking_url: orderData?.trackingUrl || "",
                       carrier_name: orderData?.carrier || "Standard",
                       deliveredDate: new Date().toLocaleDateString('en-GB')
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -563,7 +583,9 @@ export async function startNotificationQueueListener() {
                       customer_name: customerName,
                       order_number: cleanOrderId,
                       reason: orderData?.cancelReason || "Requested by customer"
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -578,7 +600,9 @@ export async function startNotificationQueueListener() {
                       customer_name: customerName,
                       order_number: cleanOrderId,
                       refund_amount: orderData?.refundAmount || "N/A"
-                    }
+                    },
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;
@@ -588,7 +612,9 @@ export async function startNotificationQueueListener() {
                     shop,
                     recipient: customerEmail,
                     subject: `Part of Your Order #${cleanOrderId} Has Shipped`,
-                    text: `Hi ${customerName},\n\nPart of your order has been shipped. The remaining items will ship separately soon.`
+                    text: `Hi ${customerName},\n\nPart of your order has been shipped. The remaining items will ship separately soon.`,
+                    orderId: orderId,
+                    localOrderId: orderId.split('/').pop()
                   }));
                 }
                 break;

@@ -321,6 +321,8 @@ model Notification {
   status            NotificationStatus @default(PENDING)
   providerMessageId String?
   providerResponse  Json?
+  orderId           String?            // Track which order this notification is for
+  localOrderId      String?            // Local database order ID for linking
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   
@@ -328,6 +330,8 @@ model Notification {
   
   @@index([shop, status])
   @@index([providerMessageId])
+  @@index([orderId])            // Index for order-based queries
+  @@index([localOrderId])       // Index for local order tracking
   @@schema("risk_score_model")
 }
 

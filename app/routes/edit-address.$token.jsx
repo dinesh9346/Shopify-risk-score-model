@@ -108,7 +108,9 @@ export async function loader({ params }) {
     displayOrder.shippingZip = previousVerifiedOrder.shippingZip;
   } 
 
-  return Response.json({ order: displayOrder });
+  // Include orderId in response for accurate tracking
+  console.log(`[Edit Address Loader] Loaded order ${order.shopifyOrderId} with token ${token}`);
+  return Response.json({ order: displayOrder, orderId: order.shopifyOrderId, localOrderId: order.id });
 }
 
 // 2. ACTION: Runs when the customer hits "Save"

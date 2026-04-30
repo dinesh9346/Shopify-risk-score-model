@@ -1,8 +1,8 @@
-
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
+  // 1. Authenticate and get the built-in CORS helper
   const { session, cors } = await authenticate.admin(request);
   const { shop } = session;
 
@@ -12,13 +12,13 @@ export const loader = async ({ request }) => {
   if (!rawOrderId) {
     return cors(Response.json({ error: "Missing orderId parameter" }, { status: 400 }));
   }
-// Extract only the numeric part of the order ID to handle both formats
+  
+  // Extract only the numeric part of the order ID to handle both formats
   const numericOrderId = rawOrderId.replace(/\D/g, ""); 
-
 
   console.log(` DEBUG SEARCH: Looking for Order ID [${numericOrderId}] on Shop [${shop}]`);
   
-  //  temporary debug: Check if the order ID exists in any format in the database to rule out formatting issues
+  // temporary debug: Check if the order ID exists in any format in the database to rule out formatting issues
   const dbCheck = await prisma.shopify_store_order.findMany({
     where: { shopifyOrderId: { contains: numericOrderId } }
   });
@@ -28,8 +28,6 @@ export const loader = async ({ request }) => {
     console.log(` DB ROW DETAILS -> Shop: [${dbCheck[0].shop}] | Saved ID: [${dbCheck[0].shopifyOrderId}]`);
   }
   
-
- 
   try {
     // 1. Fetch the order AND its attached buyer profile in one single query!
     const order = await prisma.shopify_store_order.findFirst({
@@ -115,4 +113,21 @@ export const loader = async ({ request }) => {
     console.error("API Error - Failed to fetch buyer profile:", error);
     return cors(Response.json({ error: "Internal Server Error" }, { status: 500 }));
   }
+  
+}
+
+// Paste this at the very bottom of your backend file
+export const action = async ({ request }) => {
+  if (request.method === "OPTIONS") {
+    // Return instant approval for the preflight check without touching Shopify Auth
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, ngrok-skip-browser-warning",
+      },
+    });
+  }
+  return new Response("Method Not Allowed", { status: 405 });
 };
