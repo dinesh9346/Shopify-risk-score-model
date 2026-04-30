@@ -99,7 +99,7 @@ export const action = async ({ request }) => {
     console.log(`[Dialogflow] =====================================`);
     
     // 3. Extract data from the Dialogflow / AiSensy Payload
-    const intentName = reqBody.queryResult?.intent?.displayName; 
+    const intentName = reqBody.queryResult?.intent?.displayName || ""; 
     const queryText = reqBody.queryResult?.queryText || "No Text"; 
     
     const aiSensyPayload = reqBody.originalDetectIntentRequest?.payload;
@@ -130,26 +130,44 @@ export const action = async ({ request }) => {
     
     // Third: Lookup the most recent NOTIFICATION sent to this customer (this has orderId tracking!)
     if (!orderIdFromPayload) {
-      // Only use notification if it was sent in the last 60 minutes (reasonable window for user interaction)
+      // Only use notification if it was sent in the last 60 minutes
       const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000);
       
       // Extract just the numeric part for flexible matching
       const phoneNumeric = cleanPhone.replace(/\D/g, '');
       
-      const recentNotification = await prisma.notification.findFirst({
+      // Find ALL recent notifications to check for multiple active orders
+      const recentNotifications = await prisma.notification.findMany({
         where: {
           recipient: { 
-            contains: phoneNumeric.substring(Math.max(0, phoneNumeric.length - 10)) // Last 10 digits to be flexible
+            contains: phoneNumeric.substring(Math.max(0, phoneNumeric.length - 10)) 
           },
           orderId: { not: null },
-          createdAt: { gte: sixtyMinutesAgo }  // Only notifications from last 60 minutes
+          createdAt: { gte: sixtyMinutesAgo }
         },
         orderBy: { createdAt: 'desc' }
       });
       
-      if (recentNotification && recentNotification.orderId) {
-        orderIdFromPayload = recentNotification.orderId;
-        console.log(`[Dialogflow] Found orderId from recent notification (sent at ${recentNotification.createdAt}): ${orderIdFromPayload}`);
+      // Extract unique order IDs to see if there's a conflict
+      const uniqueRecentOrderIds = [...new Set(recentNotifications.map(n => n.orderId))];
+
+      if (uniqueRecentOrderIds.length > 1) {
+        console.log(`[Dialogflow] CONFLICT: Multiple recent orders found for ${cleanPhone}. Prompting user to clarify.`);
+        
+        // Dynamically figure out what action the user was trying to take
+        let actionWord = "confirm order"; 
+        if (intentName.toUpperCase().includes("CANCEL") || queryText.toLowerCase().includes("cancel")) {
+            actionWord = "cancel order";
+        }
+
+        // Return immediately to Dialogflow and ask the user to type the ID WITH the correct keyword!
+        return Response.json({
+          fulfillmentText: `We noticed you have multiple recent orders. To ensure we process the correct one, please reply with '${actionWord}' followed by your exact Order ID.\n\nExample: *${actionWord} 7836573958437*`
+        });
+
+      } else if (uniqueRecentOrderIds.length === 1) {
+        orderIdFromPayload = uniqueRecentOrderIds[0];
+        console.log(`[Dialogflow] Found exactly one recent orderId from notifications: ${orderIdFromPayload}`);
       } else {
         console.log(`[Dialogflow] No recent notification found with orderId for phone: ${phoneNumeric}`);
       }
@@ -206,8 +224,19 @@ export const action = async ({ request }) => {
     // 6. INTENT ROUTING (The 3 Core Flows)
     // =================================================================
     
+    // NEW: Check if the order is already cancelled before we process ANY buttons
+    const isOrderCancelled = recentOrder?.cancelledAt || recentOrder?.financialStatus === "voided" || recentOrder?.fulfillmentStatus === "cancelled";
+
     // --- FLOW 1: ORDER CONFIRMED (Generates Token & Sends Edit Link) ---
     if (intentName === "Order_Confirmed" && recentOrder) {
+      // Catch already cancelled orders!
+      if (isOrderCancelled) {
+        console.log(`[Dialogflow] Blocked confirmation because order is already cancelled: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "This order has already been cancelled, so we cannot confirm it. Please place a new order if you'd still like to purchase these items! 🛍️"
+        });
+      }
+
       console.log(`[Dialogflow] Processing Order_Confirmed for ${cleanPhone}`);
       
       // Generate or Fetch the edit token
@@ -258,6 +287,14 @@ export const action = async ({ request }) => {
 
     // --- FLOW 2: CONFIRM ADDRESS (No Edits Needed) ---
     else if (intentName === "CONFIRM ADDRESS" && recentOrder) {
+      // Catch already cancelled orders!
+      if (isOrderCancelled) {
+        console.log(`[Dialogflow] Blocked address confirm because order is already cancelled: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "This order has already been cancelled, so we cannot update or confirm it. Please place a new order if you'd still like to purchase these items! 🛍️"
+        });
+      }
+
       console.log(`[Dialogflow] Processing Address_Confirmed for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
       
       try {
@@ -286,8 +323,17 @@ export const action = async ({ request }) => {
         });
       }
     }
+    
     // --- FLOW 3: CANCEL ORDER ---
     else if (intentName === "CANCEL ORDER" && recentOrder) {
+      // Catch already cancelled orders (prevents errors if they click cancel twice!)
+      if (isOrderCancelled) {
+        console.log(`[Dialogflow] Blocked double-cancel. Order is already cancelled: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "Your order has already been successfully cancelled! Have a great day."
+        });
+      }
+
       console.log(`[Dialogflow] Processing Order_Cancel for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
       
       try {
