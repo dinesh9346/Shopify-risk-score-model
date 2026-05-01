@@ -1,5 +1,7 @@
 import { SQSClient, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand } from "@aws-sdk/client-sqs";
 import { NotificationService } from "../models/notification.server.js";
+import crypto from "crypto";
+import prisma from "../db.server"; // Adjust path if your db.server.js is somewhere else
 // 1. IMPORT YOUR DEDICATED SERVICE FILES
 import { generateAndSendMerchantReport } from "../utils/merchantReport.server.js";
 import { handleBulkFinishWebhook } from "./bulkWebhook.server.js";
@@ -387,6 +389,48 @@ export async function startNotificationQueueListener() {
 
             console.log(` [LIFECYCLE CONSUMER] Processing ${stage} for ${cleanOrderId} | Shop: ${finalCompanyName}`);
             switch (stage) {
+              // case "ORDER_CONFIRMATION":
+              //   if (customerPhone) {
+              //     tasks.push(notificationService.sendWhatsAppNotification({
+              //       shop,
+              //       recipient: customerPhone,
+              //       templateId: WHATSAPP_TEMPLATES.ORDER_CONFIRMATION,
+              //       templateData: {
+              //         customerName,
+              //         orderId: cleanOrderId,
+              //         productDetails: orderData?.productDetails || "Order Items",
+              //         orderAmount: orderData?.orderAmount || 0,
+              //         sellerCompanyName: finalCompanyName
+              //       },
+              //       orderId: orderId,
+              //       localOrderId: orderId.split('/').pop()
+              //     }));
+              //   }
+              //   if (customerEmail) {
+              //     console.log(`[LIFECYCLE] Sending SendGrid Email to: ${customerEmail}`);
+              //     tasks.push(notificationService.sendEmailNotification({
+              //       shop,
+              //       recipient: customerEmail,
+              //       templateId: "d-aa96a93348b34b0ca20c10795f4cd2be",
+              //       templateData: {
+              //         customer_name: customerName,
+              //         customer_email: customerEmail,
+              //         order_number: cleanOrderId,
+              //         tracking_id: orderData?.trackingNumber || "Pending",
+              //         carrier_name: orderData?.carrier || "Standard Shipping",
+              //         tracking_url: orderData?.trackingUrl || "",
+              //         destination_address_name: customerName,
+              //         destination_address_city: orderData?.shippingCity || "",
+              //         destination_address_state: orderData?.shippingProvince || "",
+              //         seller_company_name: finalCompanyName
+              //       },
+              //       orderId: orderId,
+              //       localOrderId: orderId.split('/').pop()
+              //     }));
+              //   } else {
+              //     console.warn(`[LIFECYCLE WARNING] Skipped Email for ${cleanOrderId}: No email address found in payload.`);
+              //   }
+              //   break;
               case "ORDER_CONFIRMATION":
                 if (customerPhone) {
                   tasks.push(notificationService.sendWhatsAppNotification({
@@ -404,23 +448,58 @@ export async function startNotificationQueueListener() {
                     localOrderId: orderId.split('/').pop()
                   }));
                 }
+                
                 if (customerEmail) {
-                  console.log(`[LIFECYCLE] Sending SendGrid Email to: ${customerEmail}`);
+                  console.log(`[LIFECYCLE] Generating Email tokens and sending to: ${customerEmail}`);
+
+                  // 1. Generate unique, secure tokens for this specific email
+                  const confirmToken = crypto.randomUUID();
+                  const cancelToken = crypto.randomUUID();
+
+                  // 2. Save the tokens to the database so your web pages can recognize them later
+                  try {
+                    const actualOrder = await prisma.shopify_store_order.findFirst({
+                      where: { 
+                        shop: shop,
+                        shopifyOrderId: { contains: cleanOrderId } 
+                      }
+                    });
+
+                    if (actualOrder) {
+                      await prisma.shopify_store_order.update({
+                        where: { id: actualOrder.id },
+                        data: { confirmToken, cancelToken }
+                      });
+                    }
+                  } catch (dbErr) {
+                    console.error("[LIFECYCLE] Error saving email tokens to DB:", dbErr);
+                  }
+
+                 // 3. Build the actual URLs that the customer will click in the email
+                 // It will use your .env variable in production, but defaults to your ngrok tunnel for local testing!
+                   const appBaseUrl = process.env.SHOPIFY_APP_URL || "https://bullhorn-raft-thinness.ngrok-free.dev";
+
+                   const confirmUrl = `${appBaseUrl}/confirm-order/${confirmToken}`;
+                   const cancelUrl = `${appBaseUrl}/cancel-order/${cancelToken}`;
+                   
+                  // 4. Fire off the email with SendGrid, passing the new URLs as dynamic variables!
                   tasks.push(notificationService.sendEmailNotification({
                     shop,
                     recipient: customerEmail,
-                    templateId: "d-aa96a93348b34b0ca20c10795f4cd2be",
+                    templateId: "d-0f713822c6e849c8ba62a41d2ceb990d", // YOUR NEW TEMPLATE ID
                     templateData: {
                       customer_name: customerName,
                       customer_email: customerEmail,
                       order_number: cleanOrderId,
-                      tracking_id: orderData?.trackingNumber || "Pending",
-                      carrier_name: orderData?.carrier || "Standard Shipping",
-                      tracking_url: orderData?.trackingUrl || "",
-                      destination_address_name: customerName,
-                      destination_address_city: orderData?.shippingCity || "",
-                      destination_address_state: orderData?.shippingProvince || "",
-                      seller_company_name: finalCompanyName
+                      
+                      // Data specifically for your new template body
+                      product_details: orderData?.productDetails || "Order Items",
+                      order_amount: orderData?.orderAmount || 0,
+                      seller_company_name: finalCompanyName,
+                      
+                      // Buttons
+                      confirm_url: confirmUrl,
+                      cancel_url: cancelUrl
                     },
                     orderId: orderId,
                     localOrderId: orderId.split('/').pop()

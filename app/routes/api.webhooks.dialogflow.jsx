@@ -1,10 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from "../db.server.js";
 import { NotificationService } from "../models/notification.server.js";
 import { WHATSAPP_TEMPLATES } from "../config/templates.js";
-import { WhatsAppAdapter } from "../models/whatsapp-adapter.server.js"; 
-import crypto from "crypto"; 
-
-const prisma = new PrismaClient();
+import { WhatsAppAdapter } from "../models/whatsapp-adapter.server.js";
+import crypto from "crypto";
 
 // =====================================================================
 // SHOPIFY UTILITY FUNCTIONS (Used for Canceling and Tagging Orders)
@@ -14,8 +12,8 @@ async function cancelShopifyOrder(shop, orderId) {
   if (!session) throw new Error("No active session for shop");
 
   // Ensure the ID is formatted correctly for Shopify GraphQL
-  const formattedId = String(orderId).includes("gid://") 
-    ? orderId 
+  const formattedId = String(orderId).includes("gid://")
+    ? orderId
     : `gid://shopify/Order/${orderId}`;
 
   // FIX: Added 'restock: true' to satisfy Shopify's strict GraphQL requirements
@@ -49,7 +47,7 @@ async function cancelShopifyOrder(shop, orderId) {
   if (data.data?.orderCancel?.userErrors?.length > 0) {
     throw new Error(data.data.orderCancel.userErrors[0].message);
   }
-  
+
   console.log(`[Shopify] Successfully triggered cancellation for ${formattedId}`);
   return true;
 }
@@ -88,7 +86,7 @@ export const action = async ({ request }) => {
   try {
     // 2. Parse the incoming JSON from Dialogflow
     const reqBody = await request.json();
-    
+
     // DEBUG: Log the entire payload for inspection
     console.log(`[Dialogflow] ========== WEBHOOK RECEIVED ==========`);
     console.log(`[Dialogflow] Intent: ${reqBody.queryResult?.intent?.displayName}`);
@@ -97,14 +95,14 @@ export const action = async ({ request }) => {
     console.log(`[Dialogflow] AiSensy Payload Keys:`, Object.keys(reqBody.originalDetectIntentRequest?.payload || {}));
     console.log(`[Dialogflow] Full AiSensy Payload:`, JSON.stringify(reqBody.originalDetectIntentRequest?.payload, null, 2));
     console.log(`[Dialogflow] =====================================`);
-    
+
     // 3. Extract data from the Dialogflow / AiSensy Payload
-    const intentName = reqBody.queryResult?.intent?.displayName || ""; 
-    const queryText = reqBody.queryResult?.queryText || "No Text"; 
-    
+    const intentName = reqBody.queryResult?.intent?.displayName || "";
+    const queryText = reqBody.queryResult?.queryText || "No Text";
+
     const aiSensyPayload = reqBody.originalDetectIntentRequest?.payload;
-    const rawPhone = aiSensyPayload?.AiSensyMobileNumber; 
-    
+    const rawPhone = aiSensyPayload?.AiSensyMobileNumber;
+
     if (!rawPhone) {
       console.log("[Dialogflow] No phone number in payload, skipping.");
       return Response.json({ fulfillmentText: "Ignored: No phone number." });
@@ -115,10 +113,10 @@ export const action = async ({ request }) => {
 
     // 4. Try to find order using orderId from multiple sources
     let recentOrder = null;
-    
+
     // First: Check if orderId is in the Dialogflow payload (from button context)
     let orderIdFromPayload = aiSensyPayload?.orderId || aiSensyPayload?.shopifyOrderId || aiSensyPayload?.order_id;
-    
+
     // Second: Check queryText for orderId (sometimes passed as text)
     if (!orderIdFromPayload && queryText) {
       const orderIdMatch = queryText.match(/(\d+)/) || queryText.match(/gid:\/\/shopify\/Order\/(\d+)/);
@@ -127,43 +125,70 @@ export const action = async ({ request }) => {
         console.log(`[Dialogflow] Extracted orderId from queryText: ${orderIdFromPayload}`);
       }
     }
-    
     // Third: Lookup the most recent NOTIFICATION sent to this customer (this has orderId tracking!)
     if (!orderIdFromPayload) {
-      // Only use notification if it was sent in the last 60 minutes
       const sixtyMinutesAgo = new Date(Date.now() - 60 * 60 * 1000);
-      
-      // Extract just the numeric part for flexible matching
       const phoneNumeric = cleanPhone.replace(/\D/g, '');
-      
-      // Find ALL recent notifications to check for multiple active orders
+
       const recentNotifications = await prisma.notification.findMany({
         where: {
-          recipient: { 
-            contains: phoneNumeric.substring(Math.max(0, phoneNumeric.length - 10)) 
-          },
+          recipient: { contains: phoneNumeric.substring(Math.max(0, phoneNumeric.length - 10)) },
           orderId: { not: null },
           createdAt: { gte: sixtyMinutesAgo }
         },
         orderBy: { createdAt: 'desc' }
       });
-      
-      // Extract unique order IDs to see if there's a conflict
+
       const uniqueRecentOrderIds = [...new Set(recentNotifications.map(n => n.orderId))];
 
       if (uniqueRecentOrderIds.length > 1) {
-        console.log(`[Dialogflow] CONFLICT: Multiple recent orders found for ${cleanPhone}. Prompting user to clarify.`);
-        
-        // Dynamically figure out what action the user was trying to take
-        let actionWord = "confirm order"; 
-        if (intentName.toUpperCase().includes("CANCEL") || queryText.toLowerCase().includes("cancel")) {
-            actionWord = "cancel order";
-        }
-
-        // Return immediately to Dialogflow and ask the user to type the ID WITH the correct keyword!
-        return Response.json({
-          fulfillmentText: `We noticed you have multiple recent orders. To ensure we process the correct one, please reply with '${actionWord}' followed by your exact Order ID.\n\nExample: *${actionWord} 7836573958437*`
+        // SMART FILTER: We have multiple recent notifications. Let's check how many are STILL ACTIVE.
+        const pureNumbers = uniqueRecentOrderIds.map(id => {
+          const match = String(id).match(/\d+/);
+          return match ? match[0] : String(id);
         });
+
+        const activeOrders = await prisma.shopify_store_order.findMany({
+          where: {
+            OR: [
+              { shopifyOrderId: { in: pureNumbers } },
+              { shopifyOrderId: { in: pureNumbers.map(num => `gid://shopify/Order/${num}`) } },
+              { shopifyOrderId: { in: uniqueRecentOrderIds } }
+            ],
+            cancelledAt: null,
+            financialStatus: { not: "voided" },
+            fulfillmentStatus: { not: "cancelled" }
+          },
+          select: { shopifyOrderId: true }
+        });
+
+        // Get the list of IDs that are still active
+        const activeOrderIds = [...new Set(activeOrders.map(o => {
+          const match = String(o.shopifyOrderId).match(/\d+/);
+          return match ? match[0] : String(o.shopifyOrderId);
+        }))];
+
+        if (activeOrderIds.length > 1) {
+          console.log(`[Dialogflow] CONFLICT: Multiple ACTIVE recent orders found for ${cleanPhone}. Prompting user to clarify.`);
+
+          let actionWord = "confirm order";
+          if (intentName.toUpperCase().includes("CANCEL") || queryText.toLowerCase().includes("cancel")) {
+            actionWord = "cancel order";
+          }
+
+          return Response.json({
+            fulfillmentText: `We noticed you have multiple active orders. To ensure we process the correct one, please reply with '${actionWord}' followed by your exact Order ID.\n\nExample: *${actionWord} 7836573958437*`
+          });
+        } else if (activeOrderIds.length === 1) {
+          // Perfect! Only ONE order is actually active. We can safely assume this is the one they want.
+          orderIdFromPayload = activeOrderIds[0];
+          console.log(`[Dialogflow] Resolved conflict: Only one active order found: ${orderIdFromPayload}`);
+        } else {
+          // Multiple notifications, but NONE are active (all are cancelled). 
+          // Just grab the most recent one so the standard "already cancelled" logic catches it below!
+          orderIdFromPayload = uniqueRecentOrderIds[0];
+          console.log(`[Dialogflow] All recent orders are cancelled. Defaulting to most recent: ${orderIdFromPayload}`);
+        }
 
       } else if (uniqueRecentOrderIds.length === 1) {
         orderIdFromPayload = uniqueRecentOrderIds[0];
@@ -172,7 +197,6 @@ export const action = async ({ request }) => {
         console.log(`[Dialogflow] No recent notification found with orderId for phone: ${phoneNumeric}`);
       }
     }
-    
     if (orderIdFromPayload) {
       // Safely extract just the numeric part of the Shopify ID
       const numericIdMatch = String(orderIdFromPayload).match(/\d+/);
@@ -180,7 +204,7 @@ export const action = async ({ request }) => {
 
       // Search ONLY against shopifyOrderId, because local 'id' is a CUID
       recentOrder = await prisma.shopify_store_order.findFirst({
-        where: { 
+        where: {
           OR: [
             { shopifyOrderId: pureNumber },
             { shopifyOrderId: `gid://shopify/Order/${pureNumber}` },
@@ -188,16 +212,16 @@ export const action = async ({ request }) => {
           ]
         }
       });
-      
+
       console.log(`[Dialogflow] Found order using orderId from payload: ${pureNumber}`);
     }
-    
+
     // Fallback: Find most recent order by phone if orderId not provided
     if (!recentOrder) {
       console.log(`[Dialogflow] WARNING: No orderId found in payload or notifications. Using MOST RECENT order as last resort.`);
       recentOrder = await prisma.shopify_store_order.findFirst({
-        where: { 
-          customerPhone: { contains: cleanPhone.substring(2) } 
+        where: {
+          customerPhone: { contains: cleanPhone.substring(2) }
         },
         orderBy: { createdAt: 'desc' }
       });
@@ -212,9 +236,9 @@ export const action = async ({ request }) => {
         shop: shopDomain,
         orderId: recentOrder?.id || null,
         customerPhone: cleanPhone,
-        messageType: "DIALOGFLOW_INTENT", 
+        messageType: "DIALOGFLOW_INTENT",
         messageBody: queryText,
-        rawPayload: reqBody, 
+        rawPayload: reqBody,
         isProcessed: false
       }
     });
@@ -223,7 +247,7 @@ export const action = async ({ request }) => {
     // =================================================================
     // 6. INTENT ROUTING (The 3 Core Flows)
     // =================================================================
-    
+
     // NEW: Check if the order is already cancelled before we process ANY buttons
     const isOrderCancelled = recentOrder?.cancelledAt || recentOrder?.financialStatus === "voided" || recentOrder?.fulfillmentStatus === "cancelled";
 
@@ -238,18 +262,18 @@ export const action = async ({ request }) => {
       }
 
       console.log(`[Dialogflow] Processing Order_Confirmed for ${cleanPhone}`);
-      
+
       // Generate or Fetch the edit token
       let editToken = recentOrder.addressEditToken;
       if (!editToken) {
-        editToken = crypto.randomUUID(); 
+        editToken = crypto.randomUUID();
         await prisma.shopify_store_order.update({
           where: { id: recentOrder.id },
           data: { addressEditToken: editToken }
         });
         console.log(`[Dialogflow] Generated NEW token for order ${recentOrder.shopifyOrderId}: ${editToken}`);
       }
-      
+
       // Construct Data for WhatsApp
       const addressParts = [
         recentOrder.shippingAddress1,
@@ -257,13 +281,13 @@ export const action = async ({ request }) => {
         recentOrder.shippingCity,
         recentOrder.shippingProvince,
         recentOrder.shippingZip
-      ].filter(Boolean); 
-      
+      ].filter(Boolean);
+
       const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : "Address not provided";
       const safeName = recentOrder.firstName || aiSensyPayload?.AiSensyName || "Customer";
 
       const templateData = {
-        customerName: safeName,       
+        customerName: safeName,
         shippingAddress: fullAddress,
         editUrl: editToken,
         orderId: recentOrder.shopifyOrderId,  // Include orderId for accurate event tracking
@@ -276,12 +300,12 @@ export const action = async ({ request }) => {
       await notificationService.sendWhatsAppNotification({
         shop: shopDomain,
         recipient: cleanPhone,
-        templateId: WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY || 'rsm_address_verification', 
+        templateId: WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY || 'rsm_address_verification',
         templateData,
         orderId: recentOrder.shopifyOrderId,  // Track which order this notification belongs to
         localOrderId: recentOrder.id
       });
-      
+
       console.log(`[WHATSAPP] Sent Address Verify template to ${cleanPhone} with token ${editToken}`);
     }
 
@@ -296,12 +320,12 @@ export const action = async ({ request }) => {
       }
 
       console.log(`[Dialogflow] Processing Address_Confirmed for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
-      
+
       try {
         // A. Mark as verified in local database
         await prisma.shopify_store_order.update({
           where: { id: recentOrder.id },
-          data: { 
+          data: {
             addressVerified: true,
             addressEditToken: null // Invalidate any edit links if they confirm it's correct
           }
@@ -323,7 +347,7 @@ export const action = async ({ request }) => {
         });
       }
     }
-    
+
     // --- FLOW 3: CANCEL ORDER ---
     else if (intentName === "CANCEL ORDER" && recentOrder) {
       // Catch already cancelled orders (prevents errors if they click cancel twice!)
@@ -335,7 +359,7 @@ export const action = async ({ request }) => {
       }
 
       console.log(`[Dialogflow] Processing Order_Cancel for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
-      
+
       try {
         // A. Cancel the order in Shopify
         await cancelShopifyOrder(shopDomain, recentOrder.shopifyOrderId);
@@ -344,11 +368,11 @@ export const action = async ({ request }) => {
         // B. Update local PostgreSQL database
         await prisma.shopify_store_order.update({
           where: { id: recentOrder.id },
-          data: { 
-            financialStatus: "voided", 
+          data: {
+            financialStatus: "voided",
             fulfillmentStatus: "cancelled",
             cancelledAt: new Date(),
-            addressEditToken: null 
+            addressEditToken: null
           }
         });
         console.log(`[Dialogflow] Updated local DB for order ${recentOrder.shopifyOrderId}`);

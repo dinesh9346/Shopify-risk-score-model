@@ -74,7 +74,11 @@ model shopify_store_order {
   addressFingerprint String? // Used to detect if the address changed
   hasDispute        Boolean  @default(false)
   isRTO             Boolean  @default(false)
+  // for email confirmation and cancellation flows
+  confirmToken      String?  @unique
+  cancelToken       String?  @unique
 
+  
   cancelledAt       DateTime?
   customerReplies   CustomerReply[]
   createdAt         DateTime @default(now())
