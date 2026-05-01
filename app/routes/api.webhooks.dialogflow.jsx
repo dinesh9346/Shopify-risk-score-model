@@ -75,6 +75,14 @@ async function addTagToShopifyOrder(shop, orderGid, tag) {
   });
 }
 
+// Helper function to safely prefix tokens for cross-platform acknowledgement
+const markTokenAsUsed = (token, prefix) => {
+  if (!token) return token;
+  // Strip any existing prefix just in case it was already used
+  const baseToken = token.replace(/^(WA_USED_|WEB_USED_)/, '');
+  return `${prefix}${baseToken}`;
+};
+
 // MAIN WEBHOOK ACTION HANDLER
 
 export const action = async ({ request }) => {
@@ -265,14 +273,22 @@ export const action = async ({ request }) => {
 
       // Generate or Fetch the edit token
       let editToken = recentOrder.addressEditToken;
+      
+      // Update the confirmToken to mark it as WA_USED so email links show the correct UI
+      const updatedConfirmToken = markTokenAsUsed(recentOrder.confirmToken, 'WA_USED_');
+
       if (!editToken) {
         editToken = crypto.randomUUID();
-        await prisma.shopify_store_order.update({
-          where: { id: recentOrder.id },
-          data: { addressEditToken: editToken }
-        });
-        console.log(`[Dialogflow] Generated NEW token for order ${recentOrder.shopifyOrderId}: ${editToken}`);
       }
+
+      await prisma.shopify_store_order.update({
+        where: { id: recentOrder.id },
+        data: { 
+          addressEditToken: editToken,
+          confirmToken: updatedConfirmToken
+        }
+      });
+      console.log(`[Dialogflow] Updated tokens for Order_Confirmed on ${recentOrder.shopifyOrderId}`);
 
       // Construct Data for WhatsApp
       const addressParts = [
@@ -322,12 +338,12 @@ export const action = async ({ request }) => {
       console.log(`[Dialogflow] Processing Address_Confirmed for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
 
       try {
-        // A. Mark as verified in local database
+        // A. Mark as verified in local database and prefix token
         await prisma.shopify_store_order.update({
           where: { id: recentOrder.id },
           data: {
             addressVerified: true,
-            addressEditToken: null // Invalidate any edit links if they confirm it's correct
+            addressEditToken: markTokenAsUsed(recentOrder.addressEditToken, 'WA_USED_')
           }
         });
 
@@ -372,6 +388,8 @@ export const action = async ({ request }) => {
             financialStatus: "voided",
             fulfillmentStatus: "cancelled",
             cancelledAt: new Date(),
+            cancelToken: markTokenAsUsed(recentOrder.cancelToken, 'WA_USED_'),
+            confirmToken: null,
             addressEditToken: null
           }
         });

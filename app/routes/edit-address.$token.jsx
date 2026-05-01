@@ -1,7 +1,63 @@
 import { useLoaderData, Form, useActionData, useNavigation } from "react-router";
 import prisma from "../db.server"; 
-import { updateShopifyOrderAddress } from "../models/updateAddress.server";
+// I commented this out since we replaced it with our new, more powerful helper below!
+// import { updateShopifyOrderAddress } from "../models/updateAddress.server";
 import { WhatsAppAdapter } from "../models/whatsapp-adapter.server.js"; 
+
+// --- NEW HELPER: Updates the Order AND Customer Profile in Shopify ---
+async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
+  const session = await prisma.session.findFirst({ 
+    where: { shop: shop, isOnline: false },
+    orderBy: { expires: 'desc' }
+  });
+  
+  if (!session || !session.accessToken) throw new Error("No active Shopify session");
+
+  const formattedId = String(orderId).includes("gid://") ? orderId : `gid://shopify/Order/${orderId}`;
+  
+  // 1. Get Customer ID from this specific order
+  const getCustomerQuery = `query { order(id: "${formattedId}") { customer { id } } }`;
+  const getCustomerRes = await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
+    body: JSON.stringify({ query: getCustomerQuery }),
+  });
+  const customerData = await getCustomerRes.json();
+  const customerId = customerData.data?.order?.customer?.id;
+
+  // 2. Update Order's Shipping Address
+  const orderUpdateQuery = `
+    mutation orderUpdate($input: OrderInput!) {
+      orderUpdate(input: $input) { userErrors { message } }
+    }
+  `;
+  await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
+    body: JSON.stringify({ 
+      query: orderUpdateQuery, 
+      variables: { input: { id: formattedId, shippingAddress: newAddress } } 
+    }),
+  });
+
+  // 3. Update Customer's Default Profile Address (For future orders!)
+  if (customerId) {
+    const customerUpdateQuery = `
+      mutation customerUpdate($input: CustomerInput!) {
+        customerUpdate(input: $input) { userErrors { message } }
+      }
+    `;
+    await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
+      body: JSON.stringify({ 
+        query: customerUpdateQuery, 
+        variables: { input: { id: customerId, addresses: [newAddress] } } 
+      }),
+    });
+  }
+  return true;
+}
 
 // 1. LOADER: Fetches the order securely using the token
 export async function loader({ params }) {
@@ -11,8 +67,8 @@ export async function loader({ params }) {
     return Response.json({ order: null, error: "Invalid token" });
   }
 
-  const order = await prisma.shopify_store_order.findUnique({
-    where: { addressEditToken: token },
+  const order = await prisma.shopify_store_order.findFirst({
+    where: { addressEditToken: { endsWith: token } },
     select: {
       id: true,
       shop: true,
@@ -24,17 +80,12 @@ export async function loader({ params }) {
       customerPhone: true,
       firstName: true,
       lastName: true,
-      addressVerified: true // <-- NEW: Fetch this to check if already done
+      addressEditToken: true
     }
   });
 
   if (!order) {
     return Response.json({ order: null });
-  }
-
-  // NEW: If they already verified it, tell the UI to show the success screen immediately!
-  if (order.addressVerified) {
-    return Response.json({ order, isAlreadyVerified: true });
   }
 
   // Create a copy of the order to safely modify for the UI
@@ -60,7 +111,7 @@ export async function loader({ params }) {
     displayOrder.shippingZip = previousVerifiedOrder.shippingZip;
   } 
 
-  return Response.json({ order: displayOrder, isAlreadyVerified: false });
+  return Response.json({ order: displayOrder });
 }
 
 // 2. ACTION: Runs when the customer hits "Save"
@@ -68,16 +119,11 @@ export async function action({ request, params }) {
   const formData = await request.formData();
   const token = params.token;
   
-  const order = await prisma.shopify_store_order.findUnique({
+  const order = await prisma.shopify_store_order.findFirst({
     where: { addressEditToken: token }
   });
 
   if (!order) return Response.json({ error: "Invalid token" }, { status: 400 });
-
-  // Prevent double-processing
-  if (order.addressVerified) {
-    return Response.json({ success: true });
-  }
 
   const newAddress = {
     firstName: order.firstName || "",
@@ -89,12 +135,11 @@ export async function action({ request, params }) {
   };
 
   try {
-    // A. Update Shopify
-    await updateShopifyOrderAddress(order.shop, order.shopifyOrderId, newAddress);
+    // A. Update Shopify (Using our new helper to update BOTH Order and Customer Profile)
+    await updateShopifyOrderAndCustomerAddress(order.shop, order.shopifyOrderId, newAddress);
 
     // B. Update local Database
-    // FIX: We intentionally DO NOT set addressEditToken to null here.
-    // Setting `addressVerified: true` is enough to securely lock the form and display the success screen.
+    // Invalidate the edit link so they can't submit twice.
     await prisma.shopify_store_order.update({
       where: { id: order.id },
       data: {
@@ -102,7 +147,8 @@ export async function action({ request, params }) {
         shippingCity: newAddress.city,
         shippingProvince: newAddress.province,
         shippingZip: newAddress.zip,
-        addressVerified: true 
+        addressVerified: true,
+        addressEditToken: `WEB_USED_${token}`
       }
     });
 
@@ -135,20 +181,20 @@ export async function action({ request, params }) {
 
 // 3. UI: The mobile-friendly form
 export default function EditAddress() {
-  const { order, isAlreadyVerified } = useLoaderData();
+  const { order } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
 
   // Detect if the form is currently saving
   const isSubmitting = navigation.state === "submitting";
 
-  // 1. SUCCESS STATE: Form just submitted OR they clicked the link again later
-  if (actionData?.success || isAlreadyVerified) {
+  // 1. SUCCESS STATE: Form just submitted
+  if (actionData?.success) {
     return (
       <div style={{ padding: "30px", textAlign: "center", fontFamily: "sans-serif" }}>
         <h2 style={{ color: "#10b981" }}>Address Confirmed! ✓</h2>
         <p>Your delivery details have been securely updated in our system. Your order is being processed for dispatch!</p>
-        <p style={{ marginTop: "20px", fontSize: "14px", color: "#666" }}>You can safely close this window and return to WhatsApp.</p>
+        <p style={{ marginTop: "20px", fontSize: "14px", color: "#666" }}>You can safely close this window and return to your messages.</p>
       </div>
     );
   }
@@ -158,7 +204,26 @@ export default function EditAddress() {
     return (
       <div style={{ padding: "30px", textAlign: "center", fontFamily: "sans-serif" }}>
         <h2 style={{ color: "#f43f5e" }}>Link Expired</h2>
-        <p>This address confirmation link is invalid or has expired. If you need to make changes, please message us on WhatsApp again.</p>
+        <p>This address confirmation link is invalid or has expired. If you need to make changes, please contact support.</p>
+      </div>
+    );
+  }
+
+  // ALREADY USED CROSS-PLATFORM UI
+  if (order.addressEditToken && order.addressEditToken.startsWith("WA_USED_")) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px", border: "2px solid #10b981", borderRadius: "8px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Verified ✓</h2>
+        <p>You have already successfully verified your address via <strong>WhatsApp</strong>!</p>
+      </div>
+    );
+  }
+
+  if (order.addressEditToken && order.addressEditToken.startsWith("WEB_USED_") && !actionData?.success) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Verified ✓</h2>
+        <p>You have already verified your address via email.</p>
       </div>
     );
   }

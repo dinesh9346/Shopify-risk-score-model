@@ -43,14 +43,15 @@ export async function loader({ params }) {
   const token = params.token;
   if (!token) return Response.json({ order: null });
 
-  const order = await prisma.shopify_store_order.findUnique({
-    where: { cancelToken: token },
+  const order = await prisma.shopify_store_order.findFirst({
+    where: { cancelToken: { endsWith: token } },
     select: {
       id: true,
       shopifyOrderId: true,
       financialStatus: true,
       cancelledAt: true,
-      shop: true
+      shop: true,
+      cancelToken: true
     }
   });
 
@@ -61,7 +62,7 @@ export async function loader({ params }) {
 export async function action({ params }) {
   const token = params.token;
   
-  const order = await prisma.shopify_store_order.findUnique({
+  const order = await prisma.shopify_store_order.findFirst({
     where: { cancelToken: token }
   });
 
@@ -78,7 +79,7 @@ export async function action({ params }) {
         financialStatus: "voided", 
         fulfillmentStatus: "cancelled",
         cancelledAt: new Date(),
-        cancelToken: null,
+        cancelToken: `WEB_USED_${token}`,
         confirmToken: null,
         addressEditToken: null 
       }
@@ -113,6 +114,25 @@ export default function CancelOrderPage() {
       <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
         <h2 style={{ color: "#f43f5e" }}>Link Expired</h2>
         <p>This cancellation link is invalid or has already been used.</p>
+      </div>
+    );
+  }
+
+  // ALREADY USED CROSS-PLATFORM UI
+  if (order.cancelToken && order.cancelToken.startsWith("WA_USED_")) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px", border: "2px solid #10b981", borderRadius: "8px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Cancelled ✓</h2>
+        <p>You have already successfully cancelled this order via <strong>WhatsApp</strong>!</p>
+      </div>
+    );
+  }
+
+  if (order.cancelToken && order.cancelToken.startsWith("WEB_USED_") && !actionData?.success) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Cancelled ✓</h2>
+        <p>You have already cancelled this order via email.</p>
       </div>
     );
   }

@@ -1,21 +1,22 @@
 import { useLoaderData, Form, useActionData, useNavigation } from "react-router";
 import prisma from "../db.server"; 
 import crypto from "crypto";
-import notificationService from "../models/notification.server.js";
-
+import { NotificationService } from "../models/notification.server.js"; 
+const notificationService = new NotificationService();
 // 1. LOADER: Securely fetch the order when the page opens
 export async function loader({ params }) {
   const token = params.token;
   if (!token) return Response.json({ order: null });
 
-  const order = await prisma.shopify_store_order.findUnique({
-    where: { confirmToken: token },
+  const order = await prisma.shopify_store_order.findFirst({
+    where: { confirmToken: { endsWith: token } },
     select: {
       id: true,
       shopifyOrderId: true,
       financialStatus: true,
       cancelledAt: true,
-      addressVerified: true
+      addressVerified: true,
+      confirmToken: true
     }
   });
 
@@ -27,7 +28,7 @@ export async function action({ params, request }) {
   const token = params.token;
   
   // Fetch the order with all the details we need to send the next email
-  const order = await prisma.shopify_store_order.findUnique({
+  const order = await prisma.shopify_store_order.findFirst({
     where: { confirmToken: token },
     select: {
       id: true,
@@ -48,11 +49,11 @@ export async function action({ params, request }) {
       editToken = crypto.randomUUID(); 
     }
 
-    // 2. Update DB: Nullify the confirm token so it can't be used again, and save the address edit token
+    // 2. Update DB: Mark token as used via web, and save the address edit token
     await prisma.shopify_store_order.update({
       where: { id: order.id },
       data: { 
-        confirmToken: null,
+        confirmToken: `WEB_USED_${token}`,
         addressEditToken: editToken
       }
     });
@@ -133,6 +134,25 @@ export default function ConfirmOrderPage() {
       <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
         <h2 style={{ color: "#f43f5e" }}>Link Expired</h2>
         <p>This confirmation link is invalid or has already been used.</p>
+      </div>
+    );
+  }
+
+  // ALREADY USED CROSS-PLATFORM UI
+  if (order.confirmToken && order.confirmToken.startsWith("WA_USED_")) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px", border: "2px solid #10b981", borderRadius: "8px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Confirmed ✓</h2>
+        <p>You have already successfully confirmed this order via <strong>WhatsApp</strong>!</p>
+      </div>
+    );
+  }
+
+  if (order.confirmToken && order.confirmToken.startsWith("WEB_USED_") && !actionData?.success) {
+    return (
+      <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
+        <h2 style={{ color: "#10b981" }}>Already Confirmed ✓</h2>
+        <p>You have already confirmed this order via email.</p>
       </div>
     );
   }
