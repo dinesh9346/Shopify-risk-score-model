@@ -39,7 +39,10 @@ export async function captureMLTrainingData(shop, orderId, terminalState) {
 
     // Feature 2: Order Type
     const gateway = (order.paymentGateway || "").toLowerCase();
-    const isCod = gateway.includes("cod") || gateway.includes("cash") || gateway.includes("pay on delivery");
+    let isCod = gateway.includes("cod") || gateway.includes("cash") || gateway.includes("pay on delivery");
+    if ((order.financialStatus || "").toLowerCase() === "pending") {
+      isCod = true;
+    }
     const order_type = isCod ? "COD" : "PREPAID";
 
     // Feature 3: Order Value Bin

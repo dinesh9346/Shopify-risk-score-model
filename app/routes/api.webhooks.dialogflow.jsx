@@ -269,11 +269,25 @@ export const action = async ({ request }) => {
         });
       }
 
+      // Check if already confirmed cross-platform
+      if (recentOrder.confirmToken && recentOrder.confirmToken.startsWith("WEB_USED_")) {
+        console.log(`[Dialogflow] Blocked confirmation because order is already confirmed via email: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "You have already confirmed this order via email! ✅"
+        });
+      }
+      if (recentOrder.confirmToken && recentOrder.confirmToken.startsWith("WA_USED_")) {
+        console.log(`[Dialogflow] Blocked confirmation because order is already confirmed via WhatsApp: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "You have already confirmed this order via WhatsApp! ✅"
+        });
+      }
+
       console.log(`[Dialogflow] Processing Order_Confirmed for ${cleanPhone}`);
 
       // Generate or Fetch the edit token
       let editToken = recentOrder.addressEditToken;
-      
+
       // Update the confirmToken to mark it as WA_USED so email links show the correct UI
       const updatedConfirmToken = markTokenAsUsed(recentOrder.confirmToken, 'WA_USED_');
 
@@ -283,7 +297,7 @@ export const action = async ({ request }) => {
 
       await prisma.shopify_store_order.update({
         where: { id: recentOrder.id },
-        data: { 
+        data: {
           addressEditToken: editToken,
           confirmToken: updatedConfirmToken
         }
@@ -335,6 +349,20 @@ export const action = async ({ request }) => {
         });
       }
 
+      // Check if already verified cross-platform
+      if (recentOrder.addressEditToken && recentOrder.addressEditToken.startsWith("WEB_USED_")) {
+        console.log(`[Dialogflow] Blocked address confirm because address is already verified via email: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "You have already verified your address via email! ✅"
+        });
+      }
+      if (recentOrder.addressEditToken && recentOrder.addressEditToken.startsWith("WA_USED_")) {
+        console.log(`[Dialogflow] Blocked address confirm because address is already verified via WhatsApp: ${recentOrder.shopifyOrderId}`);
+        return Response.json({
+          fulfillmentText: "You have already verified your address via WhatsApp! ✅"
+        });
+      }
+
       console.log(`[Dialogflow] Processing Address_Confirmed for ${cleanPhone} | OrderID: ${recentOrder.shopifyOrderId}`);
 
       try {
@@ -369,8 +397,16 @@ export const action = async ({ request }) => {
       // Catch already cancelled orders (prevents errors if they click cancel twice!)
       if (isOrderCancelled) {
         console.log(`[Dialogflow] Blocked double-cancel. Order is already cancelled: ${recentOrder.shopifyOrderId}`);
+
+        let viaMsg = "";
+        if (recentOrder.cancelToken && recentOrder.cancelToken.startsWith("WEB_USED_")) {
+          viaMsg = " via email";
+        } else if (recentOrder.cancelToken && recentOrder.cancelToken.startsWith("WA_USED_")) {
+          viaMsg = " via WhatsApp";
+        }
+
         return Response.json({
-          fulfillmentText: "Your order has already been successfully cancelled! Have a great day."
+          fulfillmentText: `Your order has already been successfully cancelled${viaMsg}! Have a great day. ✅`
         });
       }
 

@@ -2,8 +2,23 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
+  // --- CORS PREFLIGHT BYPASS ---
+  // Shopify's authenticate.admin() strict mode returns 410 for OPTIONS requests 
+  // because they lack the Authorization header. We must intercept OPTIONS 
+  // at the very top of the loader to return our own CORS headers.
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, ngrok-skip-browser-warning",
+      },
+    });
+  }
+
   // 1. Authenticate and get the built-in CORS helper
-  const { session, cors } = await authenticate.admin(request);
+  const { session, cors, admin } = await authenticate.admin(request);
   const { shop } = session;
 
   const url = new URL(request.url);
@@ -41,8 +56,97 @@ export const loader = async ({ request }) => {
     });
 
     if (!order) {
-       console.log("DEBUG: Order not yet in DB. Forcing frontend retry...");
-       return cors(Response.json({ error: "Order not yet processed" }, { status: 202 })); 
+      console.log(`DEBUG: Order ${numericOrderId} not in local DB. Querying Shopify GraphQL...`);
+      let customerEmail = null;
+      let customerPhone = null;
+      let customerId = null;
+
+      try {
+        const graphqlQuery = `
+          query {
+            order(id: "gid://shopify/Order/${numericOrderId}") {
+              customer {
+                id
+                email
+                phone
+              }
+              email
+              phone
+            }
+          }
+        `;
+        const response = await admin.graphql(graphqlQuery);
+        const json = await response.json();
+        const orderData = json.data?.order;
+        
+        if (orderData) {
+          customerEmail = orderData.customer?.email || orderData.email;
+          customerPhone = orderData.customer?.phone || orderData.phone;
+          if (orderData.customer?.id) {
+            customerId = String(orderData.customer.id).replace(/\D/g, "");
+          }
+        }
+      } catch (err) {
+        console.error("DEBUG: GraphQL query failed:", err);
+      }
+
+      // If we found customer info from Shopify, try to find the profile
+      const safeEmail = customerEmail?.trim().toLowerCase();
+      const safeCustId = customerId?.trim();
+      const safePhone = customerPhone?.trim();
+
+      const orConditions = [];
+      if (safeEmail) orConditions.push({ customerEmail: safeEmail });
+      if (safeCustId) orConditions.push({ customerId: safeCustId });
+      if (safePhone) orConditions.push({ customerPhone: safePhone });
+
+      let fallbackProfile = null;
+      if (orConditions.length > 0) {
+         fallbackProfile = await prisma.zippyy_buyer_profile.findFirst({
+           where: {
+              shop: shop,
+              OR: orConditions
+           }
+         });
+      }
+
+      if (!fallbackProfile) {
+        console.log("DEBUG: No profile found via GraphQL fallback. Returning default 'New' profile.");
+        return cors(Response.json({ 
+          profile: {
+            buyerSegment: "New",
+            riskReasons: [],
+            validOrderCount: 0,
+            rtoCount: 0,
+            cancelledCount: 0,
+            disputeCount: 0,
+            refundCount: 0,
+            totalSpend: 0,
+            totalorders: 0,
+            codCount: 0,
+            fulfilledCount: 0,
+            unpaidCount: 0
+          } 
+        }));
+      }
+
+      // If we DID find a profile via GraphQL fallback:
+      return cors(Response.json({
+        profile: {
+          buyerSegment: fallbackProfile.buyerSegment || "New",
+          riskReasons: fallbackProfile.riskReasons ? fallbackProfile.riskReasons.split(",").map(r => r.trim()).filter(Boolean) : [],
+          validOrderCount: fallbackProfile.validOrderCount,
+          rtoCount: fallbackProfile.rtoCount,
+          cancelledCount: fallbackProfile.cancelledCount,
+          disputeCount: fallbackProfile.disputeCount,
+          refundCount: fallbackProfile.refundCount,
+          totalSpend: fallbackProfile.totalSpend,
+          totalorders: fallbackProfile.totalorders, 
+          codCount: fallbackProfile.codCount,
+          fulfilledCount: fallbackProfile.fulfilledCount,
+          unpaidCount: fallbackProfile.unpaidCount
+        }
+      }));
     }
 
     let profile = order.buyerProfile;
@@ -116,18 +220,7 @@ export const loader = async ({ request }) => {
   
 }
 
-// Paste this at the very bottom of your backend file
 export const action = async ({ request }) => {
-  if (request.method === "OPTIONS") {
-    // Return instant approval for the preflight check without touching Shopify Auth
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, ngrok-skip-browser-warning",
-      },
-    });
-  }
-  return new Response("Method Not Allowed", { status: 405 });
+  const { cors } = await authenticate.admin(request);
+  return cors(new Response(null, { status: 204 }));
 };

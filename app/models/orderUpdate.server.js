@@ -28,7 +28,13 @@ function getProductDetailsFromPayload(payload) {
 
 function getOrderTypeFromPayload(payload) {
   const gateway = [payload?.gateway, ...(payload?.payment_gateway_names || [])].filter(Boolean).join(" ").toLowerCase();
-  return /cod|cash on delivery/.test(gateway) ? "COD" : "Prepaid";
+  let isCod = /cod|cash on delivery|pay on delivery/.test(gateway);
+  
+  if (!isCod && payload?.financial_status === "pending") {
+    isCod = true;
+  }
+  
+  return isCod ? "COD" : "Prepaid";
 }
 
 export async function processOrderUpdate(shop, payload) {
@@ -65,6 +71,7 @@ export async function processOrderUpdate(shop, payload) {
       update: {
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
+        paymentGateway: [payload.gateway, ...(payload.payment_gateway_names || [])].filter(Boolean).join(" "),
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
         isRTO: isRtoStatus,
         shippingAddress1: payload.shipping_address?.address1?.trim() || null,
@@ -86,6 +93,7 @@ export async function processOrderUpdate(shop, payload) {
         lastName: payload.customer?.last_name || null,
         financialStatus: payload.financial_status,
         fulfillmentStatus: payload.fulfillment_status,
+        paymentGateway: [payload.gateway, ...(payload.payment_gateway_names || [])].filter(Boolean).join(" "),
         cancelledAt: payload.cancelled_at ? new Date(payload.cancelled_at) : null,
         isRTO: isRtoStatus,
         shippingAddress1: payload.shipping_address?.address1?.trim() || null,

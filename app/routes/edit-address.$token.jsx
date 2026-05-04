@@ -28,10 +28,13 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
   // 2. Update Order's Shipping Address
   const orderUpdateQuery = `
     mutation orderUpdate($input: OrderInput!) {
-      orderUpdate(input: $input) { userErrors { message } }
+      orderUpdate(input: $input) { 
+        order { id }
+        userErrors { message field } 
+      }
     }
   `;
-  await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
+  const orderUpdateRes = await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
     body: JSON.stringify({ 
@@ -39,15 +42,24 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
       variables: { input: { id: formattedId, shippingAddress: newAddress } } 
     }),
   });
+  
+  const orderUpdateData = await orderUpdateRes.json();
+  if (orderUpdateData.errors) {
+    throw new Error(`Shopify API Error: ${orderUpdateData.errors[0].message}`);
+  }
+  if (orderUpdateData.data?.orderUpdate?.userErrors?.length > 0) {
+    const errorMsgs = orderUpdateData.data.orderUpdate.userErrors.map(e => e.message).join(", ");
+    throw new Error(`Shopify Validation Error: ${errorMsgs}`);
+  }
 
   // 3. Update Customer's Default Profile Address (For future orders!)
   if (customerId) {
     const customerUpdateQuery = `
       mutation customerUpdate($input: CustomerInput!) {
-        customerUpdate(input: $input) { userErrors { message } }
+        customerUpdate(input: $input) { userErrors { message field } }
       }
     `;
-    await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
+    const customerUpdateRes = await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
       body: JSON.stringify({ 
@@ -55,6 +67,12 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
         variables: { input: { id: customerId, addresses: [newAddress] } } 
       }),
     });
+    
+    const customerUpdateData = await customerUpdateRes.json();
+    if (customerUpdateData.data?.customerUpdate?.userErrors?.length > 0) {
+      console.warn("Customer Profile Address Update Failed:", customerUpdateData.data.customerUpdate.userErrors);
+      // We don't throw here, as the main order update succeeded
+    }
   }
   return true;
 }
@@ -77,6 +95,7 @@ export async function loader({ params }) {
       shippingCity: true,
       shippingProvince: true,
       shippingZip: true,
+      shippingCountry: true,
       customerPhone: true,
       firstName: true,
       lastName: true,
@@ -120,7 +139,7 @@ export async function action({ request, params }) {
   const token = params.token;
   
   const order = await prisma.shopify_store_order.findFirst({
-    where: { addressEditToken: token }
+    where: { addressEditToken: { endsWith: token } }
   });
 
   if (!order) return Response.json({ error: "Invalid token" }, { status: 400 });
@@ -132,6 +151,7 @@ export async function action({ request, params }) {
     city: formData.get("city"),
     province: formData.get("province"),
     zip: formData.get("zip"),
+    country: order.shippingCountry || "IN", // Required for successful Shopify mutation
   };
 
   try {

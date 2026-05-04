@@ -130,36 +130,29 @@ function Extension() {
              return; 
            } else {
              console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Request OK, but no profile object in response.`);
+             if (isMounted) {
+               setError(`API Error: No profile object in response.`);
+               setLoading(false);
+               return;
+             }
            }
         } else {
           const errorText = await response.text();
           console.error(`[ZIPPYY-DEBUG] [FETCH-${attempt}] HTTP Error ${response.status}: ${errorText}`);
-          setError(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
-        }
-
-        // RACE CONDITION: Try again with backoff
-        if (attempt < maxAttempts && isMounted) {
-          const delay = Math.pow(2, attempt - 1) * 1000; 
-          console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Retrying in ${delay}ms...`);
-          timeoutId = setTimeout(fetchRiskProfile, delay);
-        } else if (isMounted) {
-          console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Max attempts reached (Normal path). Forcing loading to FALSE.`);
-          setLoading(false); // FAIL-SAFE: ENDS LOADING
-          if (!error) setError(`No data after ${maxAttempts} attempts`);
+          if (isMounted) {
+            setError(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+            setLoading(false); // ENDS LOADING IMMEDIATELY
+            return;
+          }
         }
 
       } catch (errorObj) {
         const errorMsg = errorObj instanceof Error ? errorObj.message : String(errorObj);
         console.error(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Catch Block Error:`, errorMsg);
-        setError(`Error (attempt ${attempt}): ${errorMsg}`);
-        
-        if (attempt < maxAttempts && isMounted) {
-           const delay = Math.pow(2, attempt - 1) * 1000;
-           console.log(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Retrying in ${delay}ms after error...`);
-           timeoutId = setTimeout(fetchRiskProfile, delay);
-        } else if (isMounted) {
-           console.warn(`[ZIPPYY-DEBUG] [FETCH-${attempt}] Max attempts reached (Error path). Forcing loading to FALSE.`);
-           setLoading(false); // FAIL-SAFE: ENDS LOADING
+        if (isMounted) {
+          setError(`Network/JSON Error: ${errorMsg}`);
+          setLoading(false); // ENDS LOADING IMMEDIATELY
+          return;
         }
       }
     }

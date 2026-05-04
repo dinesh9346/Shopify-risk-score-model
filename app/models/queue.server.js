@@ -312,61 +312,9 @@ export async function startNotificationQueueListener() {
         const taskType = payload.taskType; 
         
         try {
-          // ROUTE 2: SEND NOTIFICATIONS 
-          if (taskType === "NOTIFICATION") {
-            const { shop, orderId, phone, email, customerName, riskLevel, isCod } = payload;
-            const orderValue = payload.orderValue ?? 0;
-            console.log(` [NOTIFICATION CONSUMER] Sending Notifications for ${orderId} | Risk: ${riskLevel}`);
-            
-            const safeName = customerName || "Customer";
-            const cleanOrderId = orderId.split('/').pop();
-            const tasks = [];
-
-            // 🚨 FORCED EMAIL TEMPLATE TEST 🚨
-            if (email) {
-              console.log("--> FIRING SENDGRID TEMPLATE TEST <--");
-              tasks.push(notificationService.sendEmailNotification({
-                shop, 
-                recipient: email,
-                templateId: 'd-aa96a93348b34b0ca20c10795f4cd2be', 
-                templateData: {
-                  customer_name: safeName, 
-                  order_id: cleanOrderId,
-                  tracking_url: `https://${shop}/apps/zippyy/track` 
-                }
-              }));
-            }
-            // --- 1. LOW RISK (Standard Confirmation) ---
-            if (riskLevel === "LOW") {
-               console.log("[Test Mode] Order is LOW risk. Shipment booked WhatsApp sent.");
-            }
-            // --- 2. MEDIUM RISK (COD Verification) ---
-            else if (riskLevel === "MEDIUM") {
-              if (isCod) {
-                if (email) {
-                  const confirmUrl = `https://${shop}/api/confirm-cod?orderId=${cleanOrderId}&phone=${phone}`;
-                  tasks.push(notificationService.sendEmailNotification({
-                    shop, recipient: email,
-                    subject: `Action Required: Verify Your Order (#${cleanOrderId})`,
-                    text: `Hi ${safeName},\n\nWe received your COD order. Please click the link below to confirm so we can ship it out:\n\n${confirmUrl}`,
-                  }));
-                }
-              }
-            }
-            // --- 3. HIGH RISK (Alert / Fraud Warning) ---
-            else if (riskLevel === "HIGH") {
-              if (email) tasks.push(notificationService.sendEmailNotification({
-                shop, recipient: email,
-                subject: `Important Update regarding your Order (#${cleanOrderId})`,
-                text: `Hi ${safeName},\n\nOur system flagged an issue verifying your order details. To avoid cancellation, please reply to this email or contact support to confirm your shipping address.`,
-              }));
-            }
-
-            await Promise.allSettled(tasks);
-          }
           
-          // ROUTE 3: SEND LIFECYCLE STAGE NOTIFICATIONS
-          else if (taskType === "LIFECYCLE_UPDATE") {
+          // ROUTE : SEND LIFECYCLE STAGE NOTIFICATIONS
+           if (taskType === "LIFECYCLE_UPDATE") {
             const { shop, orderId, stage, orderData } = payload;
             
             // 💡 ADD THIS DEBUG LOG TO SEE THE RAW DATA
@@ -389,48 +337,6 @@ export async function startNotificationQueueListener() {
 
             console.log(` [LIFECYCLE CONSUMER] Processing ${stage} for ${cleanOrderId} | Shop: ${finalCompanyName}`);
             switch (stage) {
-              // case "ORDER_CONFIRMATION":
-              //   if (customerPhone) {
-              //     tasks.push(notificationService.sendWhatsAppNotification({
-              //       shop,
-              //       recipient: customerPhone,
-              //       templateId: WHATSAPP_TEMPLATES.ORDER_CONFIRMATION,
-              //       templateData: {
-              //         customerName,
-              //         orderId: cleanOrderId,
-              //         productDetails: orderData?.productDetails || "Order Items",
-              //         orderAmount: orderData?.orderAmount || 0,
-              //         sellerCompanyName: finalCompanyName
-              //       },
-              //       orderId: orderId,
-              //       localOrderId: orderId.split('/').pop()
-              //     }));
-              //   }
-              //   if (customerEmail) {
-              //     console.log(`[LIFECYCLE] Sending SendGrid Email to: ${customerEmail}`);
-              //     tasks.push(notificationService.sendEmailNotification({
-              //       shop,
-              //       recipient: customerEmail,
-              //       templateId: "d-aa96a93348b34b0ca20c10795f4cd2be",
-              //       templateData: {
-              //         customer_name: customerName,
-              //         customer_email: customerEmail,
-              //         order_number: cleanOrderId,
-              //         tracking_id: orderData?.trackingNumber || "Pending",
-              //         carrier_name: orderData?.carrier || "Standard Shipping",
-              //         tracking_url: orderData?.trackingUrl || "",
-              //         destination_address_name: customerName,
-              //         destination_address_city: orderData?.shippingCity || "",
-              //         destination_address_state: orderData?.shippingProvince || "",
-              //         seller_company_name: finalCompanyName
-              //       },
-              //       orderId: orderId,
-              //       localOrderId: orderId.split('/').pop()
-              //     }));
-              //   } else {
-              //     console.warn(`[LIFECYCLE WARNING] Skipped Email for ${cleanOrderId}: No email address found in payload.`);
-              //   }
-              //   break;
               case "ORDER_CONFIRMATION":
                 if (customerPhone) {
                   tasks.push(notificationService.sendWhatsAppNotification({
@@ -486,7 +392,7 @@ export async function startNotificationQueueListener() {
                   tasks.push(notificationService.sendEmailNotification({
                     shop,
                     recipient: customerEmail,
-                    templateId: "d-0f713822c6e849c8ba62a41d2ceb990d", // YOUR NEW TEMPLATE ID
+                    templateId: "d-0f713822c6e849c8ba62a41d2ceb990d", 
                     templateData: {
                       customer_name: customerName,
                       customer_email: customerEmail,

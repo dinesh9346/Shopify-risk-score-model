@@ -113,19 +113,11 @@ export const loader = async ({ request }) => {
 
   // 3. Fetch recent orders for ALL profiles in the current segment 
   const profileIds = uniqueProfiles.map(p => p.id);
-  const emails = [...new Set(uniqueProfiles.map(p => p.customerEmail).filter(Boolean))];
-  const phones = [...new Set(uniqueProfiles.map(p => p.customerPhone).filter(Boolean))];
-  const customerIds = [...new Set(uniqueProfiles.map(p => p.customerId).filter(Boolean))];
 
   const relevantOrders = await prisma.shopify_store_order.findMany({
     where: {
       shop,
-      OR: [
-        { buyerProfileId: { in: profileIds } },
-        { customerEmail: { in: emails } },
-        { customerPhone: { in: phones } },
-        { customerId: { in: customerIds } }
-      ]
+      buyerProfileId: { in: profileIds }
     },
     orderBy: { updatedAt: "desc" },
     select: {
@@ -147,18 +139,11 @@ export const loader = async ({ request }) => {
 
   // Map orders to profiles
   const ordersByProfileId = new Map();
-  const ordersByEmail = new Map();
-  const ordersByPhone = new Map();
-  const ordersByCustomerId = new Map();
 
   for (const order of relevantOrders) {
-    if (order.buyerProfileId) ordersByProfileId.set(order.buyerProfileId, [...(ordersByProfileId.get(order.buyerProfileId) || []), order]);
-    if (order.customerEmail) {
-      const emailLower = order.customerEmail.toLowerCase();
-      ordersByEmail.set(emailLower, [...(ordersByEmail.get(emailLower) || []), order]);
+    if (order.buyerProfileId) {
+      ordersByProfileId.set(order.buyerProfileId, [...(ordersByProfileId.get(order.buyerProfileId) || []), order]);
     }
-    if (order.customerPhone) ordersByPhone.set(order.customerPhone, [...(ordersByPhone.get(order.customerPhone) || []), order]);
-    if (order.customerId) ordersByCustomerId.set(order.customerId, [...(ordersByCustomerId.get(order.customerId) || []), order]);
   }
 
   const profiles = uniqueProfiles.map((p) => {
@@ -175,23 +160,7 @@ export const loader = async ({ request }) => {
       }
     }
 
-    const orderHistory = [];
-    const seen = new Set();
-    const addOrders = (list) => {
-      if (!list) return;
-      for (const o of list) {
-        if (!seen.has(o.id)) {
-          seen.add(o.id);
-          orderHistory.push(o);
-        }
-      }
-    };
-
-    // Attach orders from any matched identifier
-    addOrders(ordersByProfileId.get(p.id));
-    if (p.customerEmail) addOrders(ordersByEmail.get(p.customerEmail.toLowerCase()));
-    if (p.customerPhone) addOrders(ordersByPhone.get(p.customerPhone));
-    if (p.customerId) addOrders(ordersByCustomerId.get(p.customerId));
+    const orderHistory = ordersByProfileId.get(p.id) || [];
 
     orderHistory.sort((a, b) => {
       const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
@@ -208,9 +177,12 @@ export const loader = async ({ request }) => {
     };
   });
 
+  const totalProfilesCount = await prisma.zippyy_buyer_profile.count({ where: { shop } });
+
   return Response.json({
     shop,
     profiles,
+    totalProfilesCount,
     dashboardStats: {
       totalSecuredRevenue: totals.totalSpend || 0,
       totalValidOrders: totals.validOrderCount || 0,
@@ -229,9 +201,10 @@ export const action = async ({ request }) => {
  // FRONTEND UI
 
 export default function Index() {
-  const { profiles, dashboardStats, shop } = useLoaderData() || { 
+  const { profiles, dashboardStats, shop, totalProfilesCount } = useLoaderData() || { 
     profiles: [], 
-    dashboardStats: { segmentCounts: {} } 
+    dashboardStats: { segmentCounts: {} },
+    totalProfilesCount: 0
   };
   
   const navigation = useNavigation();
@@ -504,8 +477,9 @@ export default function Index() {
       } else if (fulfill === "returned" || fulfill === "restocked") {
         return "returned";
       } else {
-        // It was physically delivered, but money was lost (Chargeback/Refund)
-        return "delivered_with_issue"; 
+        // Just mark as delivered, as the 'disputed' bucket handles disputes separately if needed
+        // Or if it was refunded, it's just delivered for physical logistics purposes.
+        return "delivered"; 
       }
     }
     if (SHIPMENT_IN_TRANSIT.has(ship)) return "in_transit";
@@ -529,7 +503,6 @@ export default function Index() {
     if (bucket === "pre_transit") return <Badge tone="info">Pre-Transit</Badge>; // <-- NEW BADGE
     if (bucket === "in_transit") return <Badge tone="info">In Transit</Badge>;
     if (bucket === "delivered") return <Badge tone="success">Delivered</Badge>;
-    if (bucket === "delivered_with_issue") return <Badge tone="warning">Delivered with Issue</Badge>;
     if (bucket === "rto") return <Badge tone="critical">RTO / Failed Delivery</Badge>;
     if (bucket === "cancelled") return <Badge tone="critical">Cancelled</Badge>;
     return <Badge>Processing</Badge>;
@@ -576,7 +549,6 @@ export default function Index() {
     { id: "pre-transit", content: "Pre-Transit" }, 
     { id: "in-transit", content: "In Transit" },
     { id: "delivered", content: "Delivered" },
-    { id: "delivered_with_issue", content: "Delivered with Issue" },
     { id: "rto", content: "RTO / Failed" },
     { id: "cancelled", content: "Cancelled" },
     { id: "disputed", content: "Disputed" }, // <-- ADDED THIS LINE
@@ -631,31 +603,14 @@ export default function Index() {
     });
   }, [filteredProfiles, selectedResources]);
 
-  if (!filteredProfiles || filteredProfiles.length === 0) {
-    if (currentTabId === "all" && !currentSearch) {
-      return (
-        <Page title="Customer Directory">
-          <Layout>
-            <Layout.Section>
-              <Card>
-                <EmptyState heading="Awaiting customer data sync" action={{ content: "Refresh Dashboard", onAction: handleRefresh, loading: isRefreshing }}>
-                  <p>We are processing historical orders to build buyer profiles.</p>
-                </EmptyState>
-              </Card>
-            </Layout.Section>
-          </Layout>
-        </Page>
-      );
-    }
-
-    // Show "No customers found" for other tabs when filtered
+  if (totalProfilesCount === 0) {
     return (
       <Page title="Customer Directory">
         <Layout>
           <Layout.Section>
             <Card>
-              <EmptyState heading="No customers found">
-                <p>Try changing your search query or selecting a different segment tab.</p>
+              <EmptyState heading="Awaiting customer data sync" action={{ content: "Refresh Dashboard", onAction: handleRefresh, loading: isRefreshing }}>
+                <p>We are processing historical orders to build buyer profiles.</p>
               </EmptyState>
             </Card>
           </Layout.Section>
@@ -675,10 +630,9 @@ export default function Index() {
       if (orderHistoryTab === 2) return bucket === "pre_transit"; 
       if (orderHistoryTab === 3) return bucket === "in_transit";
       if (orderHistoryTab === 4) return bucket === "delivered";
-      if (orderHistoryTab === 5) return bucket === "delivered_with_issue";
-      if (orderHistoryTab === 6) return bucket === "rto";
-      if (orderHistoryTab === 7) return bucket === "cancelled";
-      if (orderHistoryTab === 8) return bucket === "disputed";
+      if (orderHistoryTab === 5) return bucket === "rto";
+      if (orderHistoryTab === 6) return bucket === "cancelled";
+      if (orderHistoryTab === 7) return bucket === "disputed";
       return true;
     });
 

@@ -176,47 +176,9 @@ export async function buildHistoricalBuyerProfiles(shop) {
   });
 
   const customerMap = new Map();
-  const keyByCustomerId = new Map();
-  const keyByEmail = new Map();
-  const keyByPhone = new Map();
 
   const normalizeEmail = (email) => (email ? email.trim().toLowerCase() : null);
   const normalizePhone = (phone) => (phone ? phone.trim() : null);
-
-  const mergeProfiles = (targetKey, sourceKey) => {
-    if (targetKey === sourceKey) return;
-
-    const target = customerMap.get(targetKey);
-    const source = customerMap.get(sourceKey);
-    if (!target || !source) return;
-
-    // Merge counts
-    target.totalorders += source.totalorders;
-    target.validOrderCount += source.validOrderCount;
-    target.totalSpend += source.totalSpend;
-    target.fulfilledCount += source.fulfilledCount;
-    target.cancelledCount += source.cancelledCount;
-    target.rtoCount += source.rtoCount;
-    target.codCount += source.codCount;
-    target.unpaidCount += source.unpaidCount;
-    target.disputeCount += source.disputeCount;
-    target.refundCount += source.refundCount;
-
-    target.customerEmail = target.customerEmail || source.customerEmail;
-    target.customerPhone = target.customerPhone || source.customerPhone;
-    target.customerId = target.customerId || source.customerId;
-    target.firstName = target.firstName || source.firstName;
-    target.lastName = target.lastName || source.lastName;
-
-    // Combine tracked order IDs
-    target.orderIds = [...(target.orderIds || []), ...(source.orderIds || [])];
-
-    if (source.customerId) keyByCustomerId.set(source.customerId, targetKey);
-    if (source.customerEmail) keyByEmail.set(source.customerEmail, targetKey);
-    if (source.customerPhone) keyByPhone.set(source.customerPhone, targetKey);
-
-    customerMap.delete(sourceKey);
-  };
 
   allOrders.forEach((order) => {
     let safeEmail = normalizeEmail(order.customerEmail);
@@ -226,21 +188,8 @@ export async function buildHistoricalBuyerProfiles(shop) {
     let safeFirstName = order.firstName?.trim() || null;
     let safeLastName = order.lastName?.trim() || null;
 
-    if (safeCustId && identityMap.has(safeCustId)) {
-      const enriched = identityMap.get(safeCustId);
-      safeEmail = safeEmail || enriched.email;
-      safePhone = safePhone || enriched.phone;
-
-      safeFirstName = safeFirstName || enriched.firstName;
-      safeLastName = safeLastName || enriched.lastName;
-    }
-
-    const existingKeys = new Set();
-    if (safeCustId && keyByCustomerId.has(safeCustId)) existingKeys.add(keyByCustomerId.get(safeCustId));
-    if (safeEmail && keyByEmail.has(safeEmail)) existingKeys.add(keyByEmail.get(safeEmail));
-    if (safePhone && keyByPhone.has(safePhone)) existingKeys.add(keyByPhone.get(safePhone));
-
-    const buyerIdentifier = [...existingKeys][0] || safeEmail || safePhone || safeCustId || `guest-${order.shopifyOrderId}`;
+    // Strict Identifier Hierarchy (No cross-merging)
+    const buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${order.shopifyOrderId}`;
 
     if (!customerMap.has(buyerIdentifier)) {
       customerMap.set(buyerIdentifier, {
@@ -263,13 +212,6 @@ export async function buildHistoricalBuyerProfiles(shop) {
         orderIds: [] // Track which orders belong to this profile
       });
     }
-    for (const key of existingKeys) {
-      if (key !== buyerIdentifier) mergeProfiles(buyerIdentifier, key);
-    }
-
-    if (safeCustId) keyByCustomerId.set(safeCustId, buyerIdentifier);
-    if (safeEmail) keyByEmail.set(safeEmail, buyerIdentifier);
-    if (safePhone) keyByPhone.set(safePhone, buyerIdentifier);
 
     const profile = customerMap.get(buyerIdentifier);
 
@@ -398,35 +340,16 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     let safeFirstName = null;
     let safeLastName = null;
 
-    // Use the same buyerIdentifier logic as bulk sync for consistency
-    // Prioritize: existing linked identifiers > customerId > email > phone > guest
-    const existingKeys = new Set();
-    
-    // Check if we have existing mappings for this customer's identifiers
-    // (In single update, we don't have the full key maps, so we'll search the database)
-    
+    // Strict Identifier Hierarchy
     let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
 
-    // 1. Attempt to find an existing profile by any identifier
-    let existingProfile = null;
-
-    if (safeCustId || safeEmail || safePhone) {
-      existingProfile = await prisma.zippyy_buyer_profile.findFirst({
-        where: {
-          shop,
-          OR: [
-            safeCustId ? { buyerIdentifier: safeCustId } : undefined,
-            safeCustId ? { customerId: safeCustId } : undefined,
-            safeEmail ? { customerEmail: safeEmail } : undefined,
-            safePhone ? { customerPhone: safePhone } : undefined,
-          ].filter(Boolean)
-        }
-      });
-      
-      if (existingProfile) {
-        buyerIdentifier = existingProfile.buyerIdentifier;
+    // 1. Attempt to find an existing profile by this EXACT identifier
+    let existingProfile = await prisma.zippyy_buyer_profile.findFirst({
+      where: {
+        shop,
+        buyerIdentifier
       }
-    }
+    });
 
     if (existingProfile) {
       safeEmail = safeEmail || existingProfile.customerEmail;
@@ -435,19 +358,28 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
       safeLastName = existingProfile.lastName || null;
     }
 
+    // Restrict the query to only fetch orders belonging exactly to this identity
+    const orderWhereClause = { shop, OR: [] };
+    
+    if (safeCustId) {
+      orderWhereClause.OR.push({ customerId: safeCustId });
+    } else if (safeEmail) {
+      orderWhereClause.OR.push({ customerEmail: safeEmail, customerId: null });
+    } else if (safePhone) {
+      orderWhereClause.OR.push({ customerPhone: safePhone, customerId: null, customerEmail: null });
+    }
+    
+    orderWhereClause.OR.push({ shopifyOrderId: `gid://shopify/Order/${orderGid}` });
+    orderWhereClause.OR.push({ shopifyOrderId: orderGid });
+    
+    if (existingProfile) {
+      orderWhereClause.OR.push({ buyerProfileId: existingProfile.id });
+    }
+
     // Now fetch their order history...
     // CRITICAL UPDATE: We must include the related disputes from Phase 1
     const allCustomerOrders = await prisma.shopify_store_order.findMany({
-      where: {
-        shop,
-        OR: [
-          safeEmail ? { customerEmail: safeEmail } : undefined,
-          safeCustId ? { customerId: safeCustId } : undefined,
-          safePhone ? { customerPhone: safePhone } : undefined,
-          { shopifyOrderId: `gid://shopify/Order/${orderGid}` },
-          { shopifyOrderId: orderGid }
-        ].filter(Boolean)
-      },
+      where: orderWhereClause,
       include: {
         disputes: true // Pulls the related records from shopify_dispute
       }
@@ -569,7 +501,8 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
         customerPhone: safePhone, 
         customerId: safeCustId,
         firstName: safeFirstName, 
-        lastName: safeLastName
+        lastName: safeLastName,
+        orders: { connect: allCustomerOrders.map(o => ({ id: o.id })) }
       },
       create: { 
         shop, 
@@ -581,7 +514,8 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
         customerPhone: safePhone, 
         customerId: safeCustId,
         firstName: safeFirstName, 
-        lastName: safeLastName
+        lastName: safeLastName,
+        orders: { connect: allCustomerOrders.map(o => ({ id: o.id })) }
       }
     });
 
