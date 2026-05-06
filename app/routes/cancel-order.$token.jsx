@@ -1,5 +1,6 @@
 import { useLoaderData, Form, useActionData, useNavigation } from "react-router";
 import prisma from "../db.server"; 
+import { addTagToShopifyOrder } from "../utils/shopifyTags.server.js";
 
 // Helper function to cancel the order in Shopify using an offline session
 async function cancelShopifyOrder(shop, orderId) {
@@ -71,6 +72,9 @@ export async function action({ params }) {
   try {
     // 1. Cancel in Shopify
     await cancelShopifyOrder(order.shop, order.shopifyOrderId);
+
+    // 1.5 Add Cancel Tag
+    await addTagToShopifyOrder(order.shop, order.shopifyOrderId, "Order: Cancelled");
 
     // 2. Update DB and destroy tokens so it can't be clicked again
     await prisma.shopify_store_order.update({

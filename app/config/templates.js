@@ -10,9 +10,9 @@ export const EMAIL_TEMPLATES = {
 export const WHATSAPP_TEMPLATES = {
   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
   RSM_ADDRESS_VERIFY: 'address_verification',
+  SHIPMENT_CREATED:'rsm_order_fully_packed',
   SHIPMENT_IN_TRANSIT: 'rsm_shipment_in_transit',
   PAYMENT_CONFIRMATION:'order_payment_confirmed',
-  SHIPMENT_CREATED:'rsm_order_fully_packed',
   SHIPMENT_DELIVERED: 'rsm_order_delivered'
 };
 

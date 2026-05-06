@@ -2,6 +2,7 @@ import { useLoaderData, Form, useActionData, useNavigation } from "react-router"
 import prisma from "../db.server"; 
 import crypto from "crypto";
 import { NotificationService } from "../models/notification.server.js"; 
+import { addTagToShopifyOrder } from "../utils/shopifyTags.server.js";
 const notificationService = new NotificationService();
 // 1. LOADER: Securely fetch the order when the page opens
 export async function loader({ params }) {
@@ -57,6 +58,9 @@ export async function action({ params, request }) {
         addressEditToken: editToken
       }
     });
+
+    // 2.5 ADD TAG
+    await addTagToShopifyOrder(order.shop, order.shopifyOrderId, "Order: Confirmed");
 
     // 3. SEND THE NEW ADDRESS VALIDATION EMAIL
     if (order.customerEmail) {

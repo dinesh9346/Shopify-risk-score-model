@@ -304,6 +304,9 @@ export const action = async ({ request }) => {
       });
       console.log(`[Dialogflow] Updated tokens for Order_Confirmed on ${recentOrder.shopifyOrderId}`);
 
+      // ADD TAG TO SHOPIFY
+      await addTagToShopifyOrder(shopDomain, recentOrder.shopifyOrderId, "Order: Confirmed");
+
       // Construct Data for WhatsApp
       const addressParts = [
         recentOrder.shippingAddress1,
@@ -416,6 +419,9 @@ export const action = async ({ request }) => {
         // A. Cancel the order in Shopify
         await cancelShopifyOrder(shopDomain, recentOrder.shopifyOrderId);
         console.log(`[Dialogflow] Successfully cancelled order ${recentOrder.shopifyOrderId} in Shopify`);
+        
+        // Add Cancel Tag
+        await addTagToShopifyOrder(shopDomain, recentOrder.shopifyOrderId, "Order: Cancelled");
 
         // B. Update local PostgreSQL database
         await prisma.shopify_store_order.update({

@@ -1,5 +1,6 @@
 import { useLoaderData, Form, useActionData, useNavigation } from "react-router";
 import prisma from "../db.server";
+import { addTagToShopifyOrder } from "../utils/shopifyTags.server.js";
 
 // 1. LOADER: Securely fetch the order when the page opens
 export async function loader({ params }) {
@@ -32,6 +33,9 @@ export async function action({ params }) {
         addressEditToken: `WEB_USED_${token}`
       }
     });
+
+    // 2.5 ADD TAG
+    await addTagToShopifyOrder(order.shop, order.shopifyOrderId, "Address: Verified");
 
     return Response.json({ success: true });
   } catch (error) {

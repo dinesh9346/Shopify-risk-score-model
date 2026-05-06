@@ -60,25 +60,25 @@ export function startScheduler() {
     }
   });
 
-  // ML Performance Report Schedule: 1st day of every month at 09:00 AM
-  cron.schedule('0 9 1 * *', async () => {
-    console.log('[SCHEDULER] Running monthly ML Performance report cron job...');
-    try {
-      const mlReportRecipients = [
-        "member1@example.com", // 1. Enter first email here
-        "member2@example.com", // 2. Enter second email here
-        "member3@example.com", // 3. Enter third email here
-        "member4@example.com", // 4. Enter fourth email here
-        "member5@example.com"  // 5. Enter fifth email here
-      ];
+  // // ML Performance Report Schedule: 1st day of every month at 09:00 AM
+  // cron.schedule('0 9 1 * *', async () => {
+  //   console.log('[SCHEDULER] Running monthly ML Performance report cron job...');
+  //   try {
+  //     const mlReportRecipients = [
+  //       "member1@example.com", // 1. Enter first email here
+  //       "member2@example.com", // 2. Enter second email here
+  //       "member3@example.com", // 3. Enter third email here
+  //       "member4@example.com", // 4. Enter fourth email here
+  //       "member5@example.com"  // 5. Enter fifth email here
+  //     ];
 
-      await generateAndSendMLPerformanceReport(mlReportRecipients);
-      console.log(`[SCHEDULER] Successfully sent ML Performance reports.`);
-    } catch (error) {
-      console.error('[SCHEDULER ERROR] Failed to send ML Performance reports:', error);
-    }
-  });
-}
+  //     await generateAndSendMLPerformanceReport(mlReportRecipients);
+  //     console.log(`[SCHEDULER] Successfully sent ML Performance reports.`);
+  //   } catch (error) {
+  //     console.error('[SCHEDULER ERROR] Failed to send ML Performance reports:', error);
+  //   }
+  // });
+
   // TESTING Schedule: Every 5 minutes (Runs both weekly and monthly for testing)
   // cron.schedule('*/5 * * * *', async () => {
   //   console.log('[SCHEDULER - TEST] Running 5-minute testing cron job...');
@@ -104,18 +104,19 @@ export function startScheduler() {
   // });
 
 
-//   // ML Performance Report TESTING Schedule: Every 5 minutes
-//   cron.schedule('*/5 * * * *', async () => {
-//     console.log('[SCHEDULER - TEST] Running 5-minute ML Performance testing cron job...');
-//     try {
-//       const testMlReportRecipients = [
-//         "dinesh@godash.ai" // Enter your test email here
-//       ];
+  // // ML Performance Report TESTING Schedule: Every 5 minutes
+  // cron.schedule('*/5 * * * *', async () => {
+  //   console.log('[SCHEDULER - TEST] Running 5-minute ML Performance testing cron job...');
+  //   try {
+  //     const testMlReportRecipients = [
+  //       "dinesh@godash.ai" 
+  //     ];
 
-//       await generateAndSendMLPerformanceReport(testMlReportRecipients);
-//       console.log(`[SCHEDULER - TEST] Successfully sent ML Performance testing report.`);
-//     } catch (error) {
-//       console.error('[SCHEDULER - TEST ERROR] Failed to send ML Performance testing report:', error);
-//     }
-//   });
-// 
+  //     await generateAndSendMLPerformanceReport(testMlReportRecipients);
+  //     console.log(`[SCHEDULER - TEST] Successfully sent ML Performance testing report.`);
+  //   } catch (error) {
+  //     console.error('[SCHEDULER - TEST ERROR] Failed to send ML Performance testing report:', error);
+  //   }
+  // });
+
+}

@@ -3,9 +3,9 @@ import { NotificationService } from "../models/notification.server.js";
 
 const notificationService = new NotificationService();
 
-/**
- * CALCULATE ML MODEL PERFORMANCE METRICS
- * Analyzes orders from the past month and calculates accuracy, precision, recall
+/*
+  CALCULATE ML MODEL PERFORMANCE METRICS
+  Analyzes orders from the past month and calculates accuracy, precision, recall
  */
 export async function calculateMLPerformanceMetrics(shop = null) {
   try {
@@ -70,20 +70,30 @@ export async function calculateMLPerformanceMetrics(shop = null) {
       if (isCancelled) return { status: 'CANCELLED', label: '❌ Cancelled' };
       if (isDelivered) return { status: 'DELIVERED', label: '✅ Delivered' };
       
+      const shipmentStatus = order.shipmentStatus?.toUpperCase() || '';
+      if (shipmentStatus.includes('OUT_FOR_DELIVERY') || shipmentStatus.includes('OUT FOR DELIVERY')) return { status: 'OUT_FOR_DELIVERY', label: '🏡 Out for Delivery' };
+      if (shipmentStatus.includes('IN_TRANSIT') || shipmentStatus.includes('IN TRANSIT')) return { status: 'IN_TRANSIT', label: '🚚 In Transit' };
+      if (shipmentStatus.includes('PRE_TRANSIT') || shipmentStatus.includes('PRE TRANSIT') || shipmentStatus.includes('LABEL') || shipmentStatus.includes('READY')) return { status: 'PRE_TRANSIT', label: '⏳ Pre-Transit' };
+
       return { status: 'PENDING', label: '⏳ Pending' };
     }
 
     // ====== CALCULATE METRICS FOR ML ======
     let mlMetrics = {
-      totalOrders: mlAssessments.length,
+      totalOrders: 0,
       highRiskOrders: 0,
       mediumRiskOrders: 0,
       lowRiskOrders: 0,
-      truePositives: 0,      // HIGH predicted & failed (RTO/Dispute/Cancelled)
+      truePositives: 0,      // HIGH predicted & failed (RTO/Dispute)
       trueNegatives: 0,      // LOW predicted & delivered
       falsePositives: 0,     // HIGH predicted but delivered
       falseNegatives: 0,     // LOW predicted but failed
       correctPredictions: 0,
+      preTransitOrders: 0,
+      inTransitOrders: 0,
+      outForDeliveryOrders: 0,
+      pendingOrders: 0,
+      cancelledOrders: 0,
       predictions: []
     };
 
@@ -92,35 +102,45 @@ export async function calculateMLPerformanceMetrics(shop = null) {
       const outcome = getActualOutcome(riskScore);
       const riskLevel = riskScore.riskLevel || 'MEDIUM';
       
-      // Count risk levels
-      if (riskLevel === 'HIGH') mlMetrics.highRiskOrders++;
-      if (riskLevel === 'MEDIUM') mlMetrics.mediumRiskOrders++;
-      if (riskLevel === 'LOW') mlMetrics.lowRiskOrders++;
+      if (outcome.status === 'PRE_TRANSIT') mlMetrics.preTransitOrders++;
+      else if (outcome.status === 'IN_TRANSIT') mlMetrics.inTransitOrders++;
+      else if (outcome.status === 'OUT_FOR_DELIVERY') mlMetrics.outForDeliveryOrders++;
+      else if (outcome.status === 'PENDING' || outcome.status === 'UNKNOWN') mlMetrics.pendingOrders++;
+      else if (outcome.status === 'CANCELLED') mlMetrics.cancelledOrders++;
 
-      // Determine if prediction was correct
-      const isFailed = ['DISPUTE', 'RTO', 'CANCELLED'].includes(outcome.status);
+      // Determine if prediction was correct (Only for Delivered, RTO, Dispute)
+      const isFailed = ['DISPUTE', 'RTO'].includes(outcome.status);
       const isSuccessful = outcome.status === 'DELIVERED';
 
-      if (riskLevel === 'HIGH' && isFailed) {
-        mlMetrics.truePositives++;
-        mlMetrics.correctPredictions++;
-      } else if (riskLevel === 'LOW' && isSuccessful) {
-        mlMetrics.trueNegatives++;
-        mlMetrics.correctPredictions++;
-      } else if (riskLevel === 'HIGH' && isSuccessful) {
-        mlMetrics.falsePositives++;
-      } else if (riskLevel === 'LOW' && isFailed) {
-        mlMetrics.falseNegatives++;
-      }
+      if (isFailed || isSuccessful) {
+        mlMetrics.totalOrders++;
 
-      // Store prediction details
-      mlMetrics.predictions.push({
-        orderId: riskScore.order?.shopifyOrderId,
-        predicted: riskLevel,
-        actual: outcome.label,
-        score: riskScore.score,
-        correct: (riskLevel === 'HIGH' && isFailed) || (riskLevel === 'LOW' && isSuccessful)
-      });
+        // Count risk levels only for evaluated orders
+        if (riskLevel === 'HIGH') mlMetrics.highRiskOrders++;
+        if (riskLevel === 'MEDIUM') mlMetrics.mediumRiskOrders++;
+        if (riskLevel === 'LOW') mlMetrics.lowRiskOrders++;
+
+        if (riskLevel === 'HIGH' && isFailed) {
+          mlMetrics.truePositives++;
+          mlMetrics.correctPredictions++;
+        } else if (riskLevel === 'LOW' && isSuccessful) {
+          mlMetrics.trueNegatives++;
+          mlMetrics.correctPredictions++;
+        } else if (riskLevel === 'HIGH' && isSuccessful) {
+          mlMetrics.falsePositives++;
+        } else if (riskLevel === 'LOW' && isFailed) {
+          mlMetrics.falseNegatives++;
+        }
+
+        // Store prediction details
+        mlMetrics.predictions.push({
+          orderId: riskScore.order?.shopifyOrderId,
+          predicted: riskLevel,
+          actual: outcome.label,
+          score: riskScore.score,
+          correct: (riskLevel === 'HIGH' && isFailed) || (riskLevel === 'LOW' && isSuccessful)
+        });
+      }
     });
 
     // Calculate accuracy, precision, recall
@@ -138,7 +158,7 @@ export async function calculateMLPerformanceMetrics(shop = null) {
 
     // ====== CALCULATE METRICS FOR MANUAL ======
     let manualMetrics = {
-      totalOrders: manualAssessments.length,
+      totalOrders: 0,
       highRiskOrders: 0,
       mediumRiskOrders: 0,
       lowRiskOrders: 0,
@@ -147,6 +167,11 @@ export async function calculateMLPerformanceMetrics(shop = null) {
       falsePositives: 0,
       falseNegatives: 0,
       correctPredictions: 0,
+      preTransitOrders: 0,
+      inTransitOrders: 0,
+      outForDeliveryOrders: 0,
+      pendingOrders: 0,
+      cancelledOrders: 0,
       predictions: []
     };
 
@@ -155,32 +180,42 @@ export async function calculateMLPerformanceMetrics(shop = null) {
       const outcome = getActualOutcome(riskScore);
       const riskLevel = riskScore.riskLevel || 'MEDIUM';
       
-      if (riskLevel === 'HIGH') manualMetrics.highRiskOrders++;
-      if (riskLevel === 'MEDIUM') manualMetrics.mediumRiskOrders++;
-      if (riskLevel === 'LOW') manualMetrics.lowRiskOrders++;
+      if (outcome.status === 'PRE_TRANSIT') manualMetrics.preTransitOrders++;
+      else if (outcome.status === 'IN_TRANSIT') manualMetrics.inTransitOrders++;
+      else if (outcome.status === 'OUT_FOR_DELIVERY') manualMetrics.outForDeliveryOrders++;
+      else if (outcome.status === 'PENDING' || outcome.status === 'UNKNOWN') manualMetrics.pendingOrders++;
+      else if (outcome.status === 'CANCELLED') manualMetrics.cancelledOrders++;
 
-      const isFailed = ['DISPUTE', 'RTO', 'CANCELLED'].includes(outcome.status);
+      const isFailed = ['DISPUTE', 'RTO'].includes(outcome.status);
       const isSuccessful = outcome.status === 'DELIVERED';
 
-      if (riskLevel === 'HIGH' && isFailed) {
-        manualMetrics.truePositives++;
-        manualMetrics.correctPredictions++;
-      } else if (riskLevel === 'LOW' && isSuccessful) {
-        manualMetrics.trueNegatives++;
-        manualMetrics.correctPredictions++;
-      } else if (riskLevel === 'HIGH' && isSuccessful) {
-        manualMetrics.falsePositives++;
-      } else if (riskLevel === 'LOW' && isFailed) {
-        manualMetrics.falseNegatives++;
-      }
+      if (isFailed || isSuccessful) {
+        manualMetrics.totalOrders++;
 
-      manualMetrics.predictions.push({
-        orderId: riskScore.order?.shopifyOrderId,
-        predicted: riskLevel,
-        actual: outcome.label,
-        score: riskScore.score,
-        correct: (riskLevel === 'HIGH' && isFailed) || (riskLevel === 'LOW' && isSuccessful)
-      });
+        if (riskLevel === 'HIGH') manualMetrics.highRiskOrders++;
+        if (riskLevel === 'MEDIUM') manualMetrics.mediumRiskOrders++;
+        if (riskLevel === 'LOW') manualMetrics.lowRiskOrders++;
+
+        if (riskLevel === 'HIGH' && isFailed) {
+          manualMetrics.truePositives++;
+          manualMetrics.correctPredictions++;
+        } else if (riskLevel === 'LOW' && isSuccessful) {
+          manualMetrics.trueNegatives++;
+          manualMetrics.correctPredictions++;
+        } else if (riskLevel === 'HIGH' && isSuccessful) {
+          manualMetrics.falsePositives++;
+        } else if (riskLevel === 'LOW' && isFailed) {
+          manualMetrics.falseNegatives++;
+        }
+
+        manualMetrics.predictions.push({
+          orderId: riskScore.order?.shopifyOrderId,
+          predicted: riskLevel,
+          actual: outcome.label,
+          score: riskScore.score,
+          correct: (riskLevel === 'HIGH' && isFailed) || (riskLevel === 'LOW' && isSuccessful)
+        });
+      }
     });
 
     manualMetrics.accuracy = manualMetrics.totalOrders > 0 
@@ -239,7 +274,7 @@ export async function generateAndSendMLPerformanceReport(teamEmails = []) {
           <h3 style="margin-top: 0; color: #0c4a6e;">🤖 ML Model Performance</h3>
           <table style="width: 100%; font-size: 14px;">
             <tr>
-              <td style="padding: 8px; border-bottom: 1px solid #bae6fd;"><strong>Total Orders</strong></td>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd;"><strong>Evaluated Orders</strong></td>
               <td style="padding: 8px; border-bottom: 1px solid #bae6fd; text-align: right;"><strong>${mlMetrics.totalOrders}</strong></td>
             </tr>
             <tr>
@@ -254,6 +289,21 @@ export async function generateAndSendMLPerformanceReport(teamEmails = []) {
               <td style="padding: 8px; border-bottom: 1px solid #bae6fd;">🔴 High Risk</td>
               <td style="padding: 8px; border-bottom: 1px solid #bae6fd; text-align: right;">${mlMetrics.highRiskOrders}</td>
             </tr>
+            <tr>
+              <td colspan="2" style="padding: 12px 8px 4px; font-weight: 600; color: #0369a1;">⏳ In-Flight Orders</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd;">Pre-Transit</td>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd; text-align: right;">${mlMetrics.preTransitOrders}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd;">In Transit</td>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd; text-align: right;">${mlMetrics.inTransitOrders}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd;">Out for Delivery</td>
+              <td style="padding: 8px; border-bottom: 1px solid #bae6fd; text-align: right;">${mlMetrics.outForDeliveryOrders}</td>
+            </tr>
           </table>
         </div>
 
@@ -262,7 +312,7 @@ export async function generateAndSendMLPerformanceReport(teamEmails = []) {
           <h3 style="margin-top: 0; color: #78350f;">👤 Manual Mode Performance</h3>
           <table style="width: 100%; font-size: 14px;">
             <tr>
-              <td style="padding: 8px; border-bottom: 1px solid #fcd34d;"><strong>Total Orders</strong></td>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d;"><strong>Evaluated Orders</strong></td>
               <td style="padding: 8px; border-bottom: 1px solid #fcd34d; text-align: right;"><strong>${manualMetrics.totalOrders}</strong></td>
             </tr>
             <tr>
@@ -276,6 +326,21 @@ export async function generateAndSendMLPerformanceReport(teamEmails = []) {
             <tr>
               <td style="padding: 8px; border-bottom: 1px solid #fcd34d;">🔴 High Risk</td>
               <td style="padding: 8px; border-bottom: 1px solid #fcd34d; text-align: right;">${manualMetrics.highRiskOrders}</td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding: 12px 8px 4px; font-weight: 600; color: #b45309;">⏳ In-Flight Orders</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d;">Pre-Transit</td>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d; text-align: right;">${manualMetrics.preTransitOrders}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d;">In Transit</td>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d; text-align: right;">${manualMetrics.inTransitOrders}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d;">Out for Delivery</td>
+              <td style="padding: 8px; border-bottom: 1px solid #fcd34d; text-align: right;">${manualMetrics.outForDeliveryOrders}</td>
             </tr>
           </table>
         </div>

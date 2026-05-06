@@ -1,6 +1,6 @@
 import { useLoaderData, useSearchParams, useRevalidator, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { useState, useMemo, useEffect } from "react"; 
+import { useState, useMemo, useEffect } from "react";
 import "@shopify/polaris/build/esm/styles.css";
 import enTranslations from "@shopify/polaris/locales/en.json";
 
@@ -20,7 +20,7 @@ import {
   Button,
   Link,
   InlineStack,
-  Tabs 
+  Tabs
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
@@ -47,17 +47,20 @@ export const loader = async ({ request }) => {
 
     const safeScores = recentScores.map((score) => ({
       id: score.id,
-      orderId: score.order?.shopifyOrderId || score.orderId, 
+      orderId: score.order?.shopifyOrderId || score.orderId,
       orderValue: Number(score.order?.orderValue ?? 0),
       paymentType: score.order?.financialStatus || "UNKNOWN",
-      
+
       // Pulls Email first, then Phone, then defaults to "Guest"
       customerName: score.order?.customerEmail || score.order?.customerPhone || "Guest",
-      
+
       riskLevel: score.riskLevel,
       score: score.score,
       reasons: score.reasons,
       createdAt: score.createdAt ? score.createdAt.toISOString() : null,
+      isConfirmed: Boolean(score.order?.confirmToken?.includes("_USED_")),
+      isAddressVerified: Boolean(score.order?.addressVerified || score.order?.addressEditToken?.includes("_USED_")),
+      isCancelled: Boolean(score.order?.cancelledAt || score.order?.financialStatus === 'voided' || score.order?.cancelToken?.includes("_USED_")),
     }));
 
     const highRiskCount = safeScores.filter((o) => o.riskLevel === "HIGH").length;
@@ -107,13 +110,16 @@ const ReasonsPopover = ({ reasons, active, onToggle }) => {
     <Popover
       active={active}
       activator={
-        <Button onClick={onToggle} plain monochrome removeUnderline>
-          <Text variant="bodyMd" tone="subdued" decoration="underline">
-            {reasonsList.length > 0 ? "View Reasons" : "No reasons"}
-          </Text>
-        </Button>
+        <div style={{ whiteSpace: "nowrap", minWidth: "110px" }}>
+          <Button onClick={onToggle} plain monochrome removeUnderline>
+            <Text variant="bodyMd" tone="subdued" decoration="underline">
+              {reasonsList.length > 0 ? "View Reasons" : "No reasons"}
+            </Text>
+          </Button>
+        </div>
       }
       onClose={onToggle}
+      preferredAlignment="right"
       sectioned={false}
     >
       <Box padding="400" width="350px">
@@ -126,10 +132,10 @@ const ReasonsPopover = ({ reasons, active, onToggle }) => {
           <BlockStack gap="200">
             {reasonsList.length > 0 ? (
               reasonsList.map((reason, index) => (
-                <Box 
-                  key={index} 
-                  padding="200" 
-                  background="bg-surface-secondary" 
+                <Box
+                  key={index}
+                  padding="200"
+                  background="bg-surface-secondary"
                   borderRadius="100"
                   borderWidth="100"
                   borderColor="border-subdued"
@@ -149,17 +155,17 @@ const ReasonsPopover = ({ reasons, active, onToggle }) => {
   );
 };
 
- //DASHBOARD UI 
+//DASHBOARD UI 
 
 function DashboardUI() {
   const data = useLoaderData() || {};
   const navigate = useNavigate();
   const [activePopoverId, setActivePopoverId] = useState(null);
-  
+
   // URL Param checking
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  
+
   const [selectedTab, setSelectedTab] = useState(0);
 
   const { revalidate, state } = useRevalidator();
@@ -205,17 +211,26 @@ function DashboardUI() {
   }, [recentScores, selectedTab]);
 
   const rows = filteredScores.map(
-    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName }, index) => {
+    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName, isConfirmed, isAddressVerified, isCancelled }, index) => {
       const cleanId = orderId ? orderId.replace("gid://shopify/Order/", "") : "N/A";
-      
-      const formattedDate = createdAt 
+
+      const formattedDate = createdAt
         ? new Intl.DateTimeFormat('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }).format(new Date(createdAt))
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }).format(new Date(createdAt))
         : "N/A";
+
+      const actionBadges = [];
+      if (isCancelled) {
+        actionBadges.push(<Badge tone="critical" key="cancel">Cancelled</Badge>);
+      } else {
+        if (isConfirmed) actionBadges.push(<Badge tone="success" key="confirm">Order Confirmed</Badge>);
+      }
+      if (isAddressVerified) actionBadges.push(<Badge tone="info" key="address">Address Verified</Badge>);
+      if (actionBadges.length === 0) actionBadges.push(<Text tone="subdued" as="span" key="pending">-</Text>);
 
       return (
         <IndexTable.Row id={id} key={id} position={index}>
@@ -230,8 +245,11 @@ function DashboardUI() {
           <IndexTable.Cell><Badge tone="info">{paymentType || "UNKNOWN"}</Badge></IndexTable.Cell>
           <IndexTable.Cell><RiskBadge level={riskLevel} /></IndexTable.Cell>
           <IndexTable.Cell>
-            <ReasonsPopover 
-              reasons={reasons} 
+            <InlineStack gap="100">{actionBadges}</InlineStack>
+          </IndexTable.Cell>
+          <IndexTable.Cell>
+            <ReasonsPopover
+              reasons={reasons}
               active={activePopoverId === id}
               onToggle={() => setActivePopoverId(activePopoverId === id ? null : id)}
             />
@@ -242,8 +260,9 @@ function DashboardUI() {
   );
 
   return (
-    <Page 
-      title="Zippyy Risk Engine" 
+    <Page
+      fullWidth
+      title="Zippyy Risk Engine"
       subtitle="Real-time fraud analysis and prevention"
       primaryAction={{
         content: "Model Fine-Tuning",
@@ -253,7 +272,7 @@ function DashboardUI() {
       <Layout>
         <Layout.Section>
           <InlineStack gap="200" align="end">
-            <Button 
+            <Button
               onClick={() => revalidate()}
               loading={state === "loading"}
             >
@@ -302,14 +321,14 @@ function DashboardUI() {
         <Layout.Section>
           <Card padding="0">
             <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange} fitted />
-            
+
             <Box padding="400">
               <Text variant="headingMd" as="h2">Actionable Intelligence Log</Text>
             </Box>
             <IndexTable
               resourceName={{ singular: "order", plural: "orders" }}
               itemCount={filteredScores.length}
-              selectable={false} 
+              selectable={false}
               headings={[
                 { title: "Date" },
                 { title: "Order ID" },
@@ -317,6 +336,7 @@ function DashboardUI() {
                 { title: "Value" },
                 { title: "Payment Method" },
                 { title: "Risk Score" },
+                { title: "Customer Action" },
                 { title: "Reasons" },
               ]}
               emptyState={

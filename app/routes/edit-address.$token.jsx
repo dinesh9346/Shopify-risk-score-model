@@ -15,8 +15,8 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
 
   const formattedId = String(orderId).includes("gid://") ? orderId : `gid://shopify/Order/${orderId}`;
   
-  // 1. Get Customer ID from this specific order
-  const getCustomerQuery = `query { order(id: "${formattedId}") { customer { id } } }`;
+  // 1. Get Customer ID and Default Address ID from this specific order
+  const getCustomerQuery = `query { order(id: "${formattedId}") { customer { id defaultAddress { id } } } }`;
   const getCustomerRes = await fetch(`https://${shop}/admin/api/2024-01/graphql.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
@@ -24,6 +24,7 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
   });
   const customerData = await getCustomerRes.json();
   const customerId = customerData.data?.order?.customer?.id;
+  const defaultAddressId = customerData.data?.order?.customer?.defaultAddress?.id;
 
   // 2. Update Order's Shipping Address
   const orderUpdateQuery = `
@@ -54,6 +55,12 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
 
   // 3. Update Customer's Default Profile Address (For future orders!)
   if (customerId) {
+    const addressInput = { ...newAddress };
+    // If they have a default address, pass the ID so Shopify overwrites it!
+    if (defaultAddressId) {
+      addressInput.id = defaultAddressId;
+    }
+
     const customerUpdateQuery = `
       mutation customerUpdate($input: CustomerInput!) {
         customerUpdate(input: $input) { userErrors { message field } }
@@ -64,7 +71,7 @@ async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": session.accessToken },
       body: JSON.stringify({ 
         query: customerUpdateQuery, 
-        variables: { input: { id: customerId, addresses: [newAddress] } } 
+        variables: { input: { id: customerId, addresses: [addressInput] } } 
       }),
     });
     
@@ -113,22 +120,24 @@ export async function loader({ params }) {
   // ==========================================
   // SMART PRE-FILL LOGIC
   // ==========================================
-  const previousVerifiedOrder = await prisma.shopify_store_order.findFirst({
-    where: {
-      customerPhone: displayOrder.customerPhone,
-      addressVerified: true, 
-      id: { not: displayOrder.id } 
-    },
-    orderBy: { createdAt: 'desc' } 
-  });
+  if (displayOrder.customerPhone) {
+    const previousVerifiedOrder = await prisma.shopify_store_order.findFirst({
+      where: {
+        customerPhone: displayOrder.customerPhone,
+        addressVerified: true, 
+        id: { not: displayOrder.id } 
+      },
+      orderBy: { createdAt: 'desc' } 
+    });
 
-  if (previousVerifiedOrder) {
-    console.log(`[Smart Pre-fill] Overwriting with past order: ${previousVerifiedOrder.shopifyOrderId}`);
-    displayOrder.shippingAddress1 = previousVerifiedOrder.shippingAddress1;
-    displayOrder.shippingCity = previousVerifiedOrder.shippingCity;
-    displayOrder.shippingProvince = previousVerifiedOrder.shippingProvince;
-    displayOrder.shippingZip = previousVerifiedOrder.shippingZip;
-  } 
+    if (previousVerifiedOrder) {
+      console.log(`[Smart Pre-fill] Overwriting with past order: ${previousVerifiedOrder.shopifyOrderId}`);
+      displayOrder.shippingAddress1 = previousVerifiedOrder.shippingAddress1;
+      displayOrder.shippingCity = previousVerifiedOrder.shippingCity;
+      displayOrder.shippingProvince = previousVerifiedOrder.shippingProvince;
+      displayOrder.shippingZip = previousVerifiedOrder.shippingZip;
+    } 
+  }
 
   return Response.json({ order: displayOrder });
 }

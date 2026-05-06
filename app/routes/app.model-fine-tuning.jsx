@@ -494,7 +494,7 @@ export default function ModelFineTuning() {
                         { title: 'Order ID' },
                         { title: 'Date' },
                         { title: 'Customer' },
-                        { title: 'Score' },
+                        { title: 'Risk Level' },
                         { title: 'Outcome' },
                       ]}
                     >
@@ -525,7 +525,7 @@ export default function ModelFineTuning() {
                             <IndexTable.Cell>{order.customerName}</IndexTable.Cell>
                             <IndexTable.Cell>
                               <Badge tone={order.riskLevel === "HIGH" ? "critical" : "success"}>
-                                {order.riskScore}%
+                                {order.riskLevel}
                               </Badge>
                             </IndexTable.Cell>
                             <IndexTable.Cell>
