@@ -4,6 +4,8 @@ import dns from 'dns/promises';
 import { enqueueOutboundRisk, enqueueNotification, enqueueLifecycleNotification } from "./queue.server.js";
 import { v4 as uuidv4 } from 'uuid';
 
+const HOUSE_NUMBER_REGEX = /(^|[^A-Za-z0-9])(?:(?:#|h\.?\s*no\.?|no\.?|house|flat|apartment|apt|unit|plot(?:\s*no\.)?|block|building)\s*[A-Za-z0-9]+(?:[-\/][A-Za-z0-9]+)*)|(?:\b\d+[A-Za-z0-9]*(?:[-\/]\d+[A-Za-z0-9]*)*\b)/i;
+
 // --- 1. PRIMARY API: OLA MAPS ---
 async function validateWithOla(orderId, fullAddress) {
   try {
@@ -692,7 +694,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
             riskPercentage += shopSettings.fakeAddressPenalty; 
             reasons.push({ description: `Logistics API Alert: The provided delivery address could not be matched or does not exist.`, sentiment: "NEGATIVE" });
           } else if (isAddressValid !== null) {
-            const hasHouseNumber = /(^|[^\w])(#|no\.?|flat|house|plot|apt|unit)?\s*\d+[a-zA-Z]?/i.test(shippingStreetLines);
+            const hasHouseNumber = HOUSE_NUMBER_REGEX.test(shippingStreetLines);
             if (!hasHouseNumber) {
               riskPercentage += shopSettings.missingHouseNoPenalty;
               reasons.push({ description: `Logistics API Alert: Verified real-world address, but missing a specific house/apartment number.`, sentiment: "NEGATIVE" });
@@ -912,7 +914,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
 
         // --- SHARED ADDRESS CHECK VARIABLES ---
         const shippingStreetLines = [shippingAddress1, shippingAddress2].filter(Boolean).join(" ").trim();
-        const hasHouseNumber = /(^|[^\w])(#|no\.?|flat|house|plot|apt|unit)?\s*\d+[a-zA-Z]?/i.test(shippingStreetLines);
+        const hasHouseNumber = HOUSE_NUMBER_REGEX.test(shippingStreetLines);
 
         // --- SEND ORDER CONFIRMATION TO MERCHANTS (CONDITIONAL) ---
         try {
@@ -956,7 +958,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
                 waCampaignName = "address_correction_required"; 
                 
                 const cleanOrderId = orderGid.split('/').pop();
-                const productDetails = payload.line_items?.map(item => `${item.title} (x${item.quantity})`).join(", ") || "Order Items";
+                const paymentMethod = isCurrentCod ? "COD" : "Prepaid";
                 
                 // Map the 5 specific variables your 'address_correction_required' template needs
                 dynamicTemplateParams = [
@@ -964,7 +966,7 @@ export async function calculateAndApplyRiskScore(shop, payload) {
                     shop,                            // {{2}} sellerCompanyName
                     cleanOrderId,                    // {{3}} orderId
                     orderValue.toString(),           // {{4}} orderAmount
-                    productDetails                   // {{5}} productDetails
+                    paymentMethod                    // {{5}} paymentMethod
                 ];
             }
 

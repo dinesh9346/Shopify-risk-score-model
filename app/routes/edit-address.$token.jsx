@@ -4,6 +4,8 @@ import { WhatsAppAdapter } from "../models/whatsapp-adapter.server.js";
 import { addTagToShopifyOrder } from "../utils/shopifyTags.server.js";
 import { checkAddressValidity } from "../models/riskAssessment.server.js"; 
 
+const HOUSE_NUMBER_REGEX = /(^|[^A-Za-z0-9])(?:(?:#|h\.?\s*no\.?|no\.?|house|flat|apartment|apt|unit|plot(?:\s*no\.)?|block|building)\s*[A-Za-z0-9]+(?:[-\/][A-Za-z0-9]+)*)|(?:\b\d+[A-Za-z0-9]*(?:[-\/]\d+[A-Za-z0-9]*)*\b)/i;
+
 // HELPER: Updates the Order AND Customer Profile in Shopify 
 async function updateShopifyOrderAndCustomerAddress(shop, orderId, newAddress) {
   const session = await prisma.session.findFirst({ 
@@ -160,7 +162,7 @@ export async function action({ request, params }) {
   const inputCountry = order.shippingCountry || "IN";
 
   // --- NEW: LIVE VALIDATION BEFORE SAVING ---
-  const hasHouseNumber = /(^|[^\w])(#|no\.?|flat|house|plot|apt|unit)?\s*\d+[a-zA-Z]?/i.test(inputAddress1);
+  const hasHouseNumber = HOUSE_NUMBER_REGEX.test(inputAddress1);
   const fullAddressString = [inputAddress1, inputCity, inputProvince, inputZip, inputCountry].filter(Boolean).join(" ");
   
   // Call your API logic
@@ -269,7 +271,7 @@ export default function EditAddress() {
     return (
       <div style={{ maxWidth: "400px", margin: "40px auto", textAlign: "center", fontFamily: "sans-serif", padding: "20px" }}>
         <h2 style={{ color: "#10b981" }}>Already Verified ✓</h2>
-        <p>You have already verified your address via email.</p>
+        <p>You have already verified your address via the web.</p>
       </div>
     );
   }

@@ -218,15 +218,19 @@ export async function syncCustomerProfile(shop, customerPayload) {
     // Prioritize: customerId > email > phone > fallback
     let buyerIdentifier = customerId;
 
-    // Check if a profile already exists with any of this customer's identifiers
+    // Check if a profile already exists for this Shopify customer ID first.
+    // If we have a customerId, do not merge solely by current email or phone,
+    // because those values can be recycled by a different buyer later.
     const existingProfile = await prisma.zippyy_buyer_profile.findFirst({
       where: {
         shop,
         OR: [
           { buyerIdentifier: customerId },
           { customerId: customerId },
-          email ? { customerEmail: email } : undefined,
-          phone ? { customerPhone: phone } : undefined,
+          ...(!customerId ? [
+            email ? { customerEmail: email } : undefined,
+            phone ? { customerPhone: phone } : undefined,
+          ].filter(Boolean) : [])
         ].filter(Boolean)
       }
     });

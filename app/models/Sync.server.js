@@ -343,7 +343,9 @@ export async function updateSingleBuyerProfile(shop, customerEmail, customerPhon
     // Strict Identifier Hierarchy
     let buyerIdentifier = safeCustId || safeEmail || safePhone || `guest-${orderGid}`;
 
-    // 1. Attempt to find an existing profile by this EXACT identifier
+    // 1. If a Shopify customerId is present, only reconcile against that stable identity.
+    //    This prevents a new customer from merging into an old profile just because
+    //    the email or phone was recycled later.
     let existingProfile = await prisma.zippyy_buyer_profile.findFirst({
       where: {
         shop,

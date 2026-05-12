@@ -49,8 +49,7 @@ const TEMPLATE_PARAM_ORDER = {
     'sellerCompanyName',
     'orderId',
     'orderAmount',
-    'productDetails'
-
+    'paymentMethod'
   ],
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: [
     'customerName',
@@ -92,6 +91,7 @@ const DEFAULT_TEMPLATE_VALUES = {
   customerName: 'Customer',
   sellerCompanyName: 'Zippyy',
   orderId: 'N/A',
+  paymentMethod: 'Prepaid',
   productDetails: 'Order Items',
   orderType: 'Standard',
   orderAmount: '0',
