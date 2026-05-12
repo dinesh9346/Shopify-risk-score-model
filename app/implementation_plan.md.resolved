@@ -1,0 +1,83 @@
+# Architectural Migration: Standalone SaaS + Shopify Connector App
+
+This document outlines the strategy and implementation steps required to transition the Zippyy Risk Score Model from an embedded Shopify application to a standalone SaaS platform. This architectural shift will allow you to bypass Shopify's Billing API, implement direct payments (e.g., via Razorpay), and maintain a listing on the Shopify App Store using a "Connector App".
+
+## User Review Required
+
+> [!WARNING]
+> **Shopify App Store Approval Risk:** While this architecture is common, Shopify reviewers carefully scrutinize apps that handle billing externally. The SaaS platform must provide substantial value outside of just being a Shopify admin skin. Your marketing and app listing must clearly position Zippyy as an independent risk-assessment platform that *integrates* with Shopify, not just a Shopify tool.
+
+> [!CAUTION]
+> **Data Migration:** Since we are splitting the application, we will need a clear strategy for migrating existing merchants and their risk assessment data from the current app's database to the new centralized SaaS database if they are not already decoupled.
+
+## Open Questions
+
+1. **SaaS Technology Stack:** The current app uses Remix. Do you want to build the standalone SaaS frontend in Remix as well, or prefer a framework like Next.js or React (Vite)?
+2. **Domain Strategy:** Have you decided on the domains? (e.g., `app.zippyy.com` for the SaaS, and `shopify-connector.zippyy.com` for the connector app's backend).
+3. **Authentication Strategy:** How will merchants log in to the SaaS? Do we want them to use their Shopify credentials (via Shopify SSO/OAuth) or create separate email/password accounts for the Zippyy SaaS?
+
+---
+
+## Proposed Architecture
+
+The system will be split into two distinct codebases/deployments:
+
+### 1. The Zippyy SaaS Platform (The Core)
+This is a completely independent web application hosted on its own domain.
+*   **Frontend:** The main dashboard where merchants view risk scores, manage settings, and pay their subscription.
+*   **Backend:** Handles ML model execution, stores core data (merchant profiles, global risk scores), and manages Razorpay subscriptions.
+*   **Billing:** Integrated directly with Razorpay.
+*   **API:** Exposes secure REST/GraphQL endpoints for the Connector App to push data to.
+
+### 2. The Shopify Connector App (The Bridge)
+This is a lightweight Shopify app built specifically to pass Shopify App Store review.
+*   **OAuth & Installation:** Handles the Shopify installation process.
+*   **Data Sync (Webhooks):** Listens for Shopify events (orders/create, customers/update) and securely forwards them to the Zippyy SaaS API.
+*   **Theme Extensions:** Contains the App Blocks (like the Buyer Profile UI widget) that inject into the Shopify storefront or admin.
+*   **Redirection:** When a merchant clicks the app in the Shopify Admin, it simply redirects them (or provides a prominent button) to log in to your SaaS platform at `app.zippyy.com`.
+
+---
+
+## Implementation Phases
+
+### Phase 1: Build the Standalone SaaS Platform
+This involves extracting the core logic from your current app into a standalone service.
+
+*   **1.1 Setup & Database:** Initialize a new web project (e.g., Next.js/Node.js). Set up a central database to store User Accounts, Subscriptions, and Risk Data.
+*   **1.2 User Authentication:** Implement a robust auth system (JWT or session-based).
+*   **1.3 Razorpay Integration:** 
+    *   Build pricing pages.
+    *   Integrate Razorpay Node.js SDK to create subscriptions.
+    *   Set up a webhook endpoint (`/api/webhooks/razorpay`) to listen for `subscription.charged` events and update the merchant's status.
+*   **1.4 Core API Development:** Create secure endpoints (authenticated via API keys generated for each merchant) to receive order data and return risk scores.
+*   **1.5 Dashboard UI:** Migrate the existing React components (Assessments, Buyer Profile, ML Reports) out of the Shopify Polaris wrapper and into standard web components (e.g., using Tailwind CSS or Material UI).
+
+### Phase 2: Refactor the Shopify Connector App
+Strip down your existing `Zippyy-Risk-Score-Model` codebase to serve only as a bridge.
+
+*   **2.1 Remove Embedded UI:** Delete the extensive dashboard routes (`app.assessments.jsx`, `app.risk-engine.jsx`, etc.). Replace the main `app._index.jsx` with a simple "Welcome" page that instructs the user to complete setup on your SaaS platform and provides a "Go to Dashboard" button.
+*   **2.2 Setup API Keys during OAuth:** Modify the installation flow. When a shop installs the app:
+    1. Complete Shopify OAuth.
+    2. The Connector backend makes an API call to the SaaS Backend to register the `shopDomain` and receive a unique SaaS API Token.
+    3. The Connector stores this API Token securely.
+*   **2.3 Webhook Forwarding:** Refactor the existing webhook handlers (e.g., `orders/create`). Instead of processing the ML model locally, the Connector app simply formats the Shopify payload and makes an HTTP POST request to the SaaS Platform's API using the stored API Token.
+*   **2.4 Keep Theme Extensions:** Ensure the `zippyy-buyer-profile` extension remains intact. Update its frontend code to fetch data directly from the new SaaS API instead of the local Shopify app backend.
+
+### Phase 3: Deployment & App Store Listing
+
+*   **3.1 Deploy Separately:** Deploy the SaaS platform (e.g., on Vercel, AWS, or Render) and the Connector App (e.g., on Fly.io or Render).
+*   **3.2 App Store Submission:** Update your Shopify App Store listing.
+    *   Ensure the description clearly states this is an integration for the Zippyy SaaS platform.
+    *   **Crucial:** Do not mention Razorpay or "alternative payments" in the Shopify listing. Position it simply as "Requires an active Zippyy account."
+*   **3.3 App Review:** Submit the Connector app for review. Since it does not charge users *within Shopify*, it bypasses the strict Billing API requirements for embedded apps.
+
+---
+
+## Verification Plan
+
+### End-to-End Testing
+1. **Installation Flow:** Install the Connector app on a development store. Verify it successfully creates an account proxy on the SaaS backend.
+2. **Redirection & Auth:** Click the app in Shopify Admin; verify seamless redirection to the SaaS dashboard.
+3. **Billing Flow:** Test the Razorpay subscription flow on the SaaS dashboard using test cards. Ensure the SaaS database reflects an 'Active' status upon successful payment webhook receipt.
+4. **Data Syncing:** Create a test order in Shopify. Verify the Connector app receives the webhook and successfully forwards the payload to the SaaS API.
+5. **Core Functionality:** Verify the SaaS platform correctly calculates the risk score and (if applicable) sends tags back to Shopify via the Connector app or directly via the Shopify Admin API.

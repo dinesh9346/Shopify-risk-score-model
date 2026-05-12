@@ -9,16 +9,18 @@ export const EMAIL_TEMPLATES = {
 
 export const WHATSAPP_TEMPLATES = {
   ORDER_CONFIRMATION: 'risk_score_model_order_confirmation',
+  ORDER_VERFICATION: 'address_correction_required',
   RSM_ADDRESS_VERIFY: 'address_verification',
-  SHIPMENT_CREATED:'rsm_order_fully_packed',
+  SHIPMENT_CREATED: 'rsm_order_fully_packed',
   SHIPMENT_IN_TRANSIT: 'rsm_shipment_in_transit',
-  PAYMENT_CONFIRMATION:'order_payment_confirmed',
+  PAYMENT_CONFIRMATION: 'order_payment_confirmed',
   SHIPMENT_DELIVERED: 'rsm_order_delivered'
 };
 
 export const WHATSAPP_CAMPAIGNS = {
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'risk_score_model_order_confirmation',
   [WHATSAPP_TEMPLATES.RSM_ADDRESS_VERIFY]: 'address_verification',
+  [WHATSAPP_TEMPLATES.ORDER_VERFICATION]: 'address_correction_required',
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'order_payment_confirmed',
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'rsm_order_fully_packed',
   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'rsm_shipment_in_transit_new',
@@ -27,6 +29,7 @@ export const WHATSAPP_CAMPAIGNS = {
 
 export const TEMPLATE_DESCRIPTIONS = {
   [WHATSAPP_TEMPLATES.ORDER_CONFIRMATION]: 'Used for order confirmation notifications',
+  [WHATSAPP_TEMPLATES.ORDER_VERFICATION]: 'Used for order verification notifications',
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: 'Used for payment confirmation notifications',
   [WHATSAPP_TEMPLATES.SHIPMENT_CREATED]: 'Shipment created notification',
   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: 'Shipment in transit with tracking link',
@@ -40,6 +43,14 @@ const TEMPLATE_PARAM_ORDER = {
     'orderId',
     'productDetails',
     'orderAmount'
+  ],
+  [WHATSAPP_TEMPLATES.ORDER_VERFICATION]: [
+    'customerName',
+    'sellerCompanyName',
+    'orderId',
+    'orderAmount',
+    'productDetails'
+
   ],
   [WHATSAPP_TEMPLATES.PAYMENT_CONFIRMATION]: [
     'customerName',
@@ -60,17 +71,17 @@ const TEMPLATE_PARAM_ORDER = {
   ],
   [WHATSAPP_TEMPLATES.SHIPMENT_IN_TRANSIT]: [
     'customerName',
-    'orderId',  
+    'orderId',
     'productDetails',
     'orderType',
     'orderAmount',
-     'trackingUrl' ,
+    'trackingUrl',
     'sellerCompanyName'
-         // For Dynamic CTA Button
+    // For Dynamic CTA Button
   ],
   [WHATSAPP_TEMPLATES.SHIPMENT_DELIVERED]: [
     'customerName',
-    'orderId',  
+    'orderId',
     'productDetails',
     'orderType',
     'sellerCompanyName'

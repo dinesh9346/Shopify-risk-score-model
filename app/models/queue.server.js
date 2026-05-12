@@ -617,7 +617,9 @@ export async function startNotificationQueueListener() {
             console.log(` [NOTIFICATION CONSUMER] Processing ${reportType} report for ${shop}`);
             await generateAndSendMerchantReport(shop, reportType);
           }
-
+          else if (taskType === "NOTIFICATION") {
+            console.log(` [NOTIFICATION CONSUMER] Processing general risk notification for ${payload.orderId}`);
+          }
           // If successful (any route), delete the message!
           await sqsClient.send(new DeleteMessageCommand({
             QueueUrl: NOTIFICATION_QUEUE_URL,

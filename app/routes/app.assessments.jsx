@@ -59,7 +59,8 @@ export const loader = async ({ request }) => {
       reasons: score.reasons,
       createdAt: score.createdAt ? score.createdAt.toISOString() : null,
       isConfirmed: Boolean(score.order?.confirmToken?.includes("_USED_")),
-      isAddressVerified: Boolean(score.order?.addressVerified || score.order?.addressEditToken?.includes("_USED_")),
+      isAddressVerified: Boolean(score.order?.addressVerified || score.order?.addressEditToken?.includes("_USED_") || score.order?.addressEditToken?.includes("_EDITED_")),
+      isAddressEdited: Boolean(score.order?.addressEditToken?.includes("_EDITED_")),
       isCancelled: Boolean(score.order?.cancelledAt || score.order?.financialStatus === 'voided' || score.order?.cancelToken?.includes("_USED_")),
     }));
 
@@ -211,7 +212,7 @@ function DashboardUI() {
   }, [recentScores, selectedTab]);
 
   const rows = filteredScores.map(
-    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName, isConfirmed, isAddressVerified, isCancelled }, index) => {
+    ({ id, orderId, orderValue, paymentType, riskLevel, score, reasons, createdAt, customerName, isConfirmed, isAddressVerified, isAddressEdited, isCancelled }, index) => {
       const cleanId = orderId ? orderId.replace("gid://shopify/Order/", "") : "N/A";
 
       const formattedDate = createdAt
@@ -229,7 +230,13 @@ function DashboardUI() {
       } else {
         if (isConfirmed) actionBadges.push(<Badge tone="success" key="confirm">Order Confirmed</Badge>);
       }
-      if (isAddressVerified) actionBadges.push(<Badge tone="info" key="address">Address Verified</Badge>);
+      
+      if (isAddressEdited) {
+        actionBadges.push(<Badge tone="warning" key="address-edited">Address Edited</Badge>);
+      } else if (isAddressVerified) {
+        actionBadges.push(<Badge tone="info" key="address">Address Verified</Badge>);
+      }
+      
       if (actionBadges.length === 0) actionBadges.push(<Text tone="subdued" as="span" key="pending">-</Text>);
 
       return (
